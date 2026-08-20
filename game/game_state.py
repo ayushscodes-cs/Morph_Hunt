@@ -41,6 +41,8 @@ MSG_ATTACK = "attack"                # {}
 MSG_INTERACT = "interact"            # {}
 MSG_CHAT = "chat"                    # {text}
 MSG_LEAVE = "leave"                  # {}
+MSG_ADD_BOT = "add_bot"              # {} (host only)
+MSG_TAUNT = "taunt"                  # {}
 
 # ----------------------------------------------------------------------
 # SERVER -> CLIENT MESSAGE TYPES
@@ -55,6 +57,7 @@ MSG_OBJECTIVE_UPDATE = "objective_update"  # {objectives:[...]}
 MSG_ELIMINATED = "eliminated"        # {player_id}
 MSG_ROUND_RESULT = "round_result"    # final results payload
 MSG_CHAT_BROADCAST = "chat_broadcast"  # {name, text}
+MSG_TAUNT_BROADCAST = "taunt_broadcast" # {name, position}
 MSG_ERROR = "error"                  # {message}
 MSG_PLAYER_LEFT = "player_left"      # {player_id}
 

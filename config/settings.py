@@ -13,9 +13,11 @@ DEFAULT_HOST = "0.0.0.0"       # server bind address
 DEFAULT_PORT = 5555
 CONNECT_TIMEOUT = 5.0
 MAX_PLAYERS = 8
-MIN_PLAYERS_TO_START = 2
+MIN_PLAYERS_TO_START = 1
 TICK_RATE = 20                  # server ticks per second
 SNAPSHOT_RATE = 12              # state broadcasts per second
+TAUNT_COOLDOWN = 6.0
+TAUNT_BONUS_XP = 20
 
 # ----------------------------------------------------------------------
 # ROUND / PHASE TIMERS (seconds) - tweak freely

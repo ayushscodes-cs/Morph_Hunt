@@ -37,6 +37,8 @@ from game.hunter import try_scanner, try_attack, scanner_regen_tick
 from game.hider import eliminate_hider
 from game.level_manager import load_level
 from game.stats_db import StatsDB
+from game.ai_bot import AIBot, BOT_NAMES
+from game.game_state import MSG_ADD_BOT, MSG_TAUNT, MSG_TAUNT_BROADCAST
 
 
 class ClientConnection:
@@ -48,7 +50,7 @@ class ClientConnection:
         self.alive = True
 
     def send(self, payload):
-        if not self.alive:
+        if not self.alive or self.sock is None:
             return
         try:
             with self.send_lock:
@@ -67,6 +69,7 @@ class GameServer:
 
         self.connections: dict[int, ClientConnection] = {}
         self.players: dict[int, PlayerState] = {}
+        self.bots: dict[int, AIBot] = {}
         self.host_player_id = None
 
         self.round_mgr = RoundManager()
@@ -227,6 +230,15 @@ class GameServer:
                 if msg.get("mode") in settings.GAME_MODES:
                     self.round_mgr.mode = msg["mode"]
                     self._broadcast_lobby_state()
+            elif mtype == MSG_ADD_BOT and player_id == self.host_player_id:
+                bot_id = self._next_id
+                self._next_id += 1
+                bot_name = BOT_NAMES[len(self.bots) % len(BOT_NAMES)]
+                bot_player = PlayerState(player_id=bot_id, name=bot_name)
+                bot_player.ready = True
+                self.players[bot_id] = bot_player
+                self.bots[bot_id] = AIBot(bot_player)
+                self._broadcast_lobby_state()
             elif mtype == MSG_START_GAME and player_id == self.host_player_id:
                 self._try_start_round()
             elif mtype == MSG_INPUT:
@@ -234,14 +246,27 @@ class GameServer:
             elif mtype == MSG_TRANSFORM:
                 ok, reason = morph_system.try_transform(player, msg.get("object_type", ""))
                 if not ok:
-                    self.connections[player_id].send({"type": MSG_ERROR, "message": reason})
+                    if player_id in self.connections:
+                        self.connections[player_id].send({"type": MSG_ERROR, "message": reason})
             elif mtype == MSG_UNTRANSFORM:
                 morph_system.untransform(player)
             elif mtype == MSG_SCANNER:
                 ok, clues = try_scanner(player, list(self.players.values()))
-                self.connections[player_id].send({"type": MSG_SCANNER_RESULT, "clues": clues})
+                if player_id in self.connections:
+                    self.connections[player_id].send({"type": MSG_SCANNER_RESULT, "clues": clues})
             elif mtype == MSG_ATTACK:
                 self._handle_attack(player)
+            elif mtype == MSG_TAUNT:
+                if player.role == ROLE_HIDER and player.alive and not player.eliminated:
+                    now = time.time()
+                    if (now - getattr(player, "last_taunt_time", 0)) >= settings.TAUNT_COOLDOWN:
+                        player.last_taunt_time = now
+                        player.xp += settings.TAUNT_BONUS_XP
+                        self._broadcast({
+                            "type": MSG_TAUNT_BROADCAST,
+                            "name": player.name,
+                            "position": list(player.position),
+                        })
             elif mtype == MSG_INTERACT:
                 self._handle_interact(player)
             elif mtype == MSG_CHAT:
@@ -259,7 +284,6 @@ class GameServer:
         if msg.get("jump"):
             player.jump_requested = True
         if "position" in msg and isinstance(msg["position"], list) and len(msg["position"]) == 3:
-            # Client-authoritative position with light server sanity clamp (MVP trust model).
             player.position = [float(v) for v in msg["position"]]
 
     def _handle_attack(self, hunter):
@@ -276,18 +300,31 @@ class GameServer:
 
     # ------------------------------------------------------------------
     def _try_start_round(self):
-        if len(self.players) < settings.MIN_PLAYERS_TO_START:
-            self._broadcast({"type": MSG_ERROR, "message": "Need at least 2 players to start."})
-            return
+        # If solo (only 1 human and no bots), automatically spawn 2 bots!
+        if len(self.players) == 1:
+            for _ in range(2):
+                bot_id = self._next_id
+                self._next_id += 1
+                bot_name = BOT_NAMES[len(self.bots) % len(BOT_NAMES)]
+                bot_player = PlayerState(player_id=bot_id, name=bot_name)
+                bot_player.ready = True
+                self.players[bot_id] = bot_player
+                self.bots[bot_id] = AIBot(bot_player)
+            self._broadcast_lobby_state()
+
         self.level_def = load_level(self.round_mgr.map_key)
         self.objective_mgr.load_for_level(self.level_def)
         self.objective_mgr.reset()
         self.round_mgr.assign_roles(list(self.players.values()))
         self._place_spawns()
 
+        for bot in self.bots.values():
+            bot.setup_round(self.level_def)
+
         self.round_mgr.set_phase(PHASE_ROLE_ASSIGN, 0.0)
         for p in self.players.values():
-            self.connections[p.player_id].send({"type": MSG_ROLE_ASSIGNED, "role": p.role})
+            if p.player_id in self.connections:
+                self.connections[p.player_id].send({"type": MSG_ROLE_ASSIGNED, "role": p.role})
         self._broadcast({"type": MSG_PHASE_CHANGE, "phase": PHASE_ROLE_ASSIGN, "time_left": 0})
 
         self.round_mgr.set_phase(PHASE_COUNTDOWN, settings.COUNTDOWN_SECONDS)
@@ -318,6 +355,11 @@ class GameServer:
             if p.role == ROLE_HUNTER:
                 scanner_regen_tick(p)
 
+        # Simulate bots
+        if self.level_def:
+            for bot in self.bots.values():
+                bot.tick(dt, phase, list(self.players.values()), self.level_def, self)
+
         if phase == PHASE_COUNTDOWN and self.round_mgr.is_phase_over():
             self.round_mgr.set_phase(PHASE_HIDING, settings.HIDING_PHASE_SECONDS)
             self._broadcast({"type": MSG_PHASE_CHANGE, "phase": PHASE_HIDING, "time_left": settings.HIDING_PHASE_SECONDS})
@@ -335,6 +377,7 @@ class GameServer:
                     self.players[pid].xp += settings.XP_PER_OBJECTIVE
             if completed:
                 self._broadcast({
+
                     "type": MSG_OBJECTIVE_UPDATE,
                     "objectives": [o.to_dict() for o in self.objective_mgr.objectives],
                 })

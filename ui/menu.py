@@ -1,386 +1,232 @@
-from ursina import Entity, Text, color, camera, mouse, destroy, time
-from ursina.prefabs.input_field import InputField
+"""
+Main Menu and Connect Dialog — Panda3D DirectGui implementation.
+
+Fix: use DirectLabel for all text (shares DirectGui render bin with DirectButton)
+and use a plain aspect2d NodePath as the root container instead of DirectFrame.
+"""
+from direct.gui.DirectGui import (
+    DirectFrame, DirectButton, DirectEntry, DirectLabel,
+)
+from direct.gui.OnscreenText import OnscreenText
+from panda3d.core import TextNode, LVecBase4f
 
 
+def _c(r, g, b, a=1.0):
+    return LVecBase4f(r / 255, g / 255, b / 255, a)
+
+
+def _label(parent, text, pos, scale, fg, align=TextNode.ACenter):
+    """Plain text label (DirectLabel, no frame)."""
+    return DirectLabel(
+        parent=parent,
+        text=text,
+        scale=scale,
+        text_fg=fg,
+        text_align=align,
+        frameColor=(0, 0, 0, 0),   # transparent frame
+        relief=None,
+        pos=pos,
+    )
+
+
+def _btn(parent, text, pos, command, fg, hover_fg=None, scale=0.07):
+    hfg = hover_fg or fg
+    return DirectButton(
+        parent=parent,
+        text=text,
+        scale=scale,
+        text_fg=fg,
+        text0_fg=fg,
+        text1_fg=_c(255, 255, 255),   # pressed
+        text2_fg=hfg,                  # hover
+        text3_fg=_c(80, 80, 80),       # disabled
+        frameColor=(
+            _c(30, 32, 48),    # normal
+            _c(50, 52, 75),    # click
+            _c(42, 45, 65),    # hover
+            _c(20, 22, 35),    # disabled
+        ),
+        frameSize=(-3.6, 3.6, -0.5, 0.85),
+        relief=1,
+        pos=pos,
+        command=command,
+    )
+
+
+# ---------------------------------------------------------------------------
 class MainMenu:
     def __init__(self, on_host, on_join, on_quit):
-        self.on_host = on_host
-        self.on_join = on_join
-        self.on_quit = on_quit
-        self.root = Entity(parent=camera.ui, enabled=True)
+        self.on_host  = on_host
+        self.on_join  = on_join
+        self.on_quit  = on_quit
 
-        self.title = Text(
+        # Plain NodePath container parented to aspect2d
+        from direct.showbase.ShowBase import ShowBase
+        import builtins
+        self._aspect2d = builtins.base.aspect2d
+        self.root = self._aspect2d.attachNewNode("main_menu")
+
+        # Background panel (rendered first = behind everything)
+        self._bg = DirectFrame(
             parent=self.root,
-            text="MORPH HUNT",
-            origin=(0, 0),
-            y=0.30,
-            scale=2.2,
-            color=color.rgb(235, 242, 245)
+            frameColor=_c(10, 12, 20),
+            frameSize=(-2, 2, -1.2, 1.2),
+            pos=(0, 0, 0),
+            sortOrder=0,
         )
 
-        self.subtitle = Text(
-            parent=self.root,
-            text="MAIN MENU",
-            origin=(0, 0),
-            y=0.215,
-            scale=0.92,
-            color=color.rgb(80, 220, 215)
-        )
+        # ---- Title -------------------------------------------------------
+        _label(self.root, "MORPH HUNT",
+               pos=(0, 0, 0.72), scale=0.17, fg=_c(235, 242, 245))
+        _label(self.root, "MAIN MENU",
+               pos=(0, 0, 0.55), scale=0.068, fg=_c(80, 220, 215))
+        _label(self.root, "HIDE  \u2022  MORPH  \u2022  SURVIVE",
+               pos=(0, 0, 0.42), scale=0.052, fg=_c(235, 170, 70))
 
-        self.tagline = Text(
-            parent=self.root,
-            text="HIDE  •  MORPH  •  SURVIVE",
-            origin=(0, 0),
-            y=0.135,
-            scale=0.72,
-            color=color.rgb(235, 170, 70)
-        )
+        # ---- Buttons -----------------------------------------------------
+        _btn(self.root, "HOST GAME",    (0, 0, 0.18),  self._do_host,
+             _c(220, 232, 235), _c(75, 235, 225))
+        _btn(self.root, "JOIN GAME",    (0, 0, 0.02),  self._do_join,
+             _c(220, 232, 235), _c(75, 235, 225))
+        self._howto_btn = _btn(
+            self.root, "HOW TO PLAY", (0, 0, -0.14), self._do_howto,
+            _c(220, 232, 235), _c(75, 235, 225))
+        _btn(self.root, "QUIT",         (0, 0, -0.30), on_quit,
+             _c(220, 130, 130), _c(255, 100, 90))
 
-        self.host_button = self._make_button("HOST GAME", 0.025)
-        self.join_button = self._make_button("JOIN GAME", -0.115)
-        self.howto_button = self._make_button("HOW TO PLAY", -0.255)
-        self.quit_button = self._make_button("QUIT", -0.395)
+        _label(self.root, "LAN MULTIPLAYER  \u2022  v1.0",
+               pos=(0, 0, -0.96), scale=0.042, fg=_c(75, 190, 195))
 
-        self.footer = Text(
-            parent=self.root,
-            text="LAN MULTIPLAYER  •  v1.0",
-            origin=(0, 0),
-            y=-0.49,
-            scale=0.55,
-            color=color.rgb(75, 190, 195)
-        )
+        # ---- How-to panel (hidden by default) ----------------------------
+        self._howto_panel = self._build_howto()
+        self._howto_panel.hide()
 
-        self.howto_panel = None
-        self._build_howto()
-
-    def _make_button(self, text, y):
-        return Text(
-            parent=self.root,
-            text=text,
-            origin=(0, 0),
-            y=y,
-            scale=1.08,
-            color=color.rgb(220, 232, 235)
-        )
-
-    def _hovered(self, button, width=0.20, height=0.045):
-        return (
-            button.x - width <= mouse.x <= button.x + width
-            and button.y - height <= mouse.y <= button.y + height
-        )
-
-    def update(self):
-        if not self.root.enabled:
-            return
-
-        buttons = [
-            self.host_button,
-            self.join_button,
-            self.howto_button
-        ]
-
-        for button in buttons:
-            if self._hovered(button):
-                button.color = color.rgb(75, 235, 225)
-                button.scale = 1.16
-            else:
-                button.color = color.rgb(220, 232, 235)
-                button.scale = 1.08
-
-        if self._hovered(self.quit_button):
-            self.quit_button.color = color.rgb(255, 90, 80)
-            self.quit_button.scale = 1.16
-        else:
-            self.quit_button.color = color.rgb(220, 205, 205)
-            self.quit_button.scale = 1.08
-
-    def input(self, key):
-        if not self.root.enabled:
-            return
-
-        if key != "left mouse down":
-            return
-
-        if self.howto_panel and self.howto_panel.enabled:
-            if (
-                -0.22 <= mouse.x <= 0.22
-                and -0.43 <= mouse.y <= -0.34
-            ):
-                self._close_howto()
-            return
-
-        if self._hovered(self.host_button):
-            self.on_host()
-            return
-
-        if self._hovered(self.join_button):
-            self.on_join()
-            return
-
-        if self._hovered(self.howto_button):
-            self._open_howto()
-            return
-
-        if self._hovered(self.quit_button):
-            self.on_quit()
-            return
-
-    def _open_howto(self):
-        for item in (
-            self.title,
-            self.subtitle,
-            self.tagline,
-            self.host_button,
-            self.join_button,
-            self.howto_button,
-            self.quit_button,
-            self.footer,
-        ):
-            item.enabled = False
-
-        self.howto_panel.enabled = True
-
-    def _close_howto(self):
-        self.howto_panel.enabled = False
-
-        for item in (
-            self.title,
-            self.subtitle,
-            self.tagline,
-            self.host_button,
-            self.join_button,
-            self.howto_button,
-            self.quit_button,
-            self.footer,
-        ):
-            item.enabled = True
-    
+    # ------------------------------------------------------------------
     def _build_howto(self):
-        self.howto_panel = Entity(
+        panel = DirectFrame(
             parent=self.root,
-            enabled=False
+            frameColor=_c(14, 16, 28, 0.97),
+            frameSize=(-1.7, 1.7, -1.0, 1.0),
+            pos=(0, 0, 0),
+            sortOrder=10,
         )
+        _label(panel, "HOW TO PLAY",
+               pos=(0, 0, 0.78), scale=0.10, fg=_c(75, 235, 225))
 
-        Text(
-            parent=self.howto_panel,
-            text="HOW TO PLAY",
-            origin=(0, 0),
-            y=0.28,
-            scale=1.55,
-            color=color.rgb(75, 235, 225)
+        body = (
+            "HIDERS\n"
+            "Morph into objects and stay hidden.\n"
+            "Complete objectives while avoiding the Hunter.\n\n"
+            "HUNTERS\n"
+            "Find suspicious objects and eliminate Hiders.\n"
+            "Use your scanner to locate clues.\n\n"
+            "CONTROLS\n"
+            "WASD  Move         Mouse  Look\n"
+            "Shift  Sprint        Space  Jump\n"
+            "1-9  Morph           E  Interact\n"
+            "Q  Scanner          LMB  Attack\n"
+            "ESC  Pause"
         )
+        _label(panel, body, pos=(0, 0, 0.38), scale=0.052,
+               fg=_c(210, 225, 228))
+        _btn(panel, "BACK", (0, 0, -0.82), self._close_howto,
+             _c(75, 235, 225), scale=0.065)
+        return panel
 
-        Text(
-            parent=self.howto_panel,
-            text=(
-                "HIDERS\n"
-                "Morph into objects around the map and stay hidden.\n"
-                "Complete objectives while avoiding the Hunter.\n\n"
-                "HUNTERS\n"
-                "Search for suspicious objects and eliminate Hiders.\n"
-                "Use your scanner to locate clues.\n\n"
-                "CONTROLS\n"
-                "WASD   Move\n"
-                "Mouse   Look\n"
-                "Shift   Sprint\n"
-                "Space   Jump\n"
-                "1-9   Morph\n"
-                "E   Interact\n"
-                "Q   Scanner\n"
-                "Left Click   Attack\n"
-                "ESC   Pause"
-            ),
-            origin=(0, 0),
-            y=0.015,
-            scale=0.68,
-            line_height=1.35,
-            color=color.rgb(210, 225, 228)
-        )
+    def _do_host(self):  self.on_host()
+    def _do_join(self):  self.on_join()
+    def _do_howto(self): self._howto_panel.show()
+    def _close_howto(self): self._howto_panel.hide()
 
-        self.back_button = Text(
-            parent=self.howto_panel,
-            text="BACK",
-            origin=(0, 0),
-            y=-0.38,
-            scale=1.0,
-            color=color.rgb(75, 235, 225)
-        )
-
-    def show(self):
-        self.root.enabled = True
-        self._close_howto()
-
-    def hide(self):
-        self.root.enabled = False
+    def show(self):   self.root.show()
+    def hide(self):   self.root.hide()
+    def update(self): pass
+    def input(self, key): pass
 
 
+# ---------------------------------------------------------------------------
 class ConnectDialog:
     def __init__(self, on_submit, on_cancel, mode="join"):
         self.on_submit = on_submit
         self.on_cancel = on_cancel
         self.mode = mode
 
-        self.root = Entity(
-            parent=camera.ui,
-            enabled=True
-        )
+        import builtins
+        self.root = builtins.base.aspect2d.attachNewNode("connect_dialog")
 
-        self.title = Text(
+        DirectFrame(
             parent=self.root,
-            text="HOST GAME" if mode == "host" else "JOIN GAME",
-            origin=(0, 0),
-            y=0.27,
-            scale=1.9,
-            color=color.rgb(75, 235, 225)
+            frameColor=_c(14, 16, 28, 0.97),
+            frameSize=(-1.5, 1.5, -1.05, 1.05),
+            pos=(0, 0, 0),
+            sortOrder=0,
         )
 
-        self.subtitle = Text(
+        title = "HOST GAME" if mode == "host" else "JOIN GAME"
+        _label(self.root, title,
+               pos=(0, 0, 0.82), scale=0.12, fg=_c(75, 235, 225))
+
+        subtitle = ("CREATE A LOCAL MULTIPLAYER LOBBY"
+                    if mode == "host"
+                    else "CONNECT TO A MORPH HUNT SERVER")
+        _label(self.root, subtitle,
+               pos=(0, 0, 0.65), scale=0.050, fg=_c(150, 190, 195))
+
+        # Name field
+        _label(self.root, "PLAYER NAME",
+               pos=(-0.55, 0, 0.48), scale=0.054, fg=_c(110, 220, 215),
+               align=TextNode.ALeft)
+        self._name_entry = DirectEntry(
             parent=self.root,
-            text=(
-                "CREATE A LOCAL MULTIPLAYER LOBBY"
-                if mode == "host"
-                else "CONNECT TO A MORPH HUNT SERVER"
-            ),
-            origin=(0, 0),
-            y=0.20,
-            scale=0.65,
-            color=color.rgb(150, 190, 195)
+            initialText="Player",
+            scale=0.06,
+            pos=(-0.70, 0, 0.32),
+            width=11,
+            frameColor=_c(28, 32, 48),
+            text_fg=_c(230, 230, 230),
+            relief=1,
         )
 
-        self.name_label = Text(
+        addr_label   = "SERVER ADDRESS" if mode == "join" else "SERVER PORT"
+        addr_default = "127.0.0.1:5555" if mode == "join" else "5555"
+
+        _label(self.root, addr_label,
+               pos=(-0.55, 0, 0.12), scale=0.054, fg=_c(110, 220, 215),
+               align=TextNode.ALeft)
+        self._addr_entry = DirectEntry(
             parent=self.root,
-            text="PLAYER NAME",
-            origin=(0, 0),
-            x=-0.20,
-            y=0.105,
-            scale=0.72,
-            color=color.rgb(110, 220, 215)
+            initialText=addr_default,
+            scale=0.06,
+            pos=(-0.70, 0, -0.04),
+            width=11,
+            frameColor=_c(28, 32, 48),
+            text_fg=_c(230, 230, 230),
+            relief=1,
         )
 
-        self.name_field = InputField(
-            parent=self.root,
-            default_value="Player",
-            y=0.035,
-            scale=(0.48, 0.06)
-        )
+        submit_text = "JOIN SERVER" if mode == "join" else "START HOSTING"
+        _btn(self.root, submit_text, (0, 0, -0.38), self._submit,
+             _c(75, 235, 225))
+        _btn(self.root, "CANCEL",    (0, 0, -0.58), self._cancel,
+             _c(210, 115, 115))
 
-        if mode == "join":
-            field_label = "SERVER ADDRESS"
-            field_default = "127.0.0.1:5555"
-            submit_text = "JOIN SERVER"
-        else:
-            field_label = "SERVER PORT"
-            field_default = "5555"
-            submit_text = "START HOSTING"
-
-        self.address_label = Text(
-            parent=self.root,
-            text=field_label,
-            origin=(0, 0),
-            x=-0.20,
-            y=-0.055,
-            scale=0.72,
-            color=color.rgb(110, 220, 215)
-        )
-
-        self.addr_field = InputField(
-            parent=self.root,
-            default_value=field_default,
-            y=-0.125,
-            scale=(0.48, 0.06)
-        )
-
-        self.submit_button = Text(
-            parent=self.root,
-            text=submit_text,
-            origin=(0, 0),
-            y=-0.235,
-            scale=0.95,
-            color=color.rgb(75, 235, 225)
-        )
-
-        self.cancel_button = Text(
-            parent=self.root,
-            text="CANCEL",
-            origin=(0, 0),
-            y=-0.335,
-            scale=0.88,
-            color=color.rgb(210, 115, 115)
-        )
-
-        self.status = Text(
-            parent=self.root,
-            text="",
-            origin=(0, 0),
-            y=-0.42,
-            scale=0.62,
-            color=color.rgb(180, 195, 200)
-        )
-
-    def _hovered_submit(self):
-        return (
-            -0.27 <= mouse.x <= 0.27
-            and -0.285 <= mouse.y <= -0.185
-        )
-
-    def _hovered_cancel(self):
-        return (
-            -0.22 <= mouse.x <= 0.22
-            and -0.385 <= mouse.y <= -0.285
-        )
-
-    def update(self):
-        if not self.root.enabled:
-            return
-
-        if self._hovered_submit():
-            self.submit_button.color = color.rgb(75, 255, 240)
-            self.submit_button.scale = 1.02
-        else:
-            self.submit_button.color = color.rgb(75, 235, 225)
-            self.submit_button.scale = 0.95
-
-        if self._hovered_cancel():
-            self.cancel_button.color = color.rgb(255, 145, 145)
-            self.cancel_button.scale = 0.96
-        else:
-            self.cancel_button.color = color.rgb(210, 115, 115)
-            self.cancel_button.scale = 0.88
-
-    def input(self, key):
-        if not self.root.enabled:
-            return
-
-        if key != "left mouse down":
-            return
-
-        if self._hovered_submit():
-            self._submit()
-            return
-
-        if self._hovered_cancel():
-            self._cancel()
-            return
+        self._status = _label(self.root, "",
+                              pos=(0, 0, -0.80), scale=0.050,
+                              fg=_c(180, 195, 200))
 
     def _submit(self):
-        name = self.name_field.text.strip() or "Player"
-        address = self.addr_field.text.strip()
+        name = self._name_entry.get().strip() or "Player"
+        addr = self._addr_entry.get().strip()
+        self._status["text"] = ("STARTING SERVER..." if self.mode == "host"
+                                else "CONNECTING...")
+        self.on_submit(name, addr)
 
-        if self.mode == "host":
-            self.status.text = "STARTING SERVER..."
-        else:
-            self.status.text = "CONNECTING..."
+    def _cancel(self): self.on_cancel()
 
-        self.on_submit(name, address)
-
-    def _cancel(self):
-        self.on_cancel()
-
-    def show(self):
-        self.root.enabled = True
-
-    def hide(self):
-        self.root.enabled = False
+    def show(self):    self.root.show()
+    def hide(self):    self.root.hide()
+    def update(self):  pass
+    def input(self, key): pass
 
     def destroy(self):
-        destroy(self.root)
+        self.root.removeNode()
