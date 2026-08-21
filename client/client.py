@@ -1,15 +1,3 @@
-"""
-ClientApp — full Panda3D implementation with rich gameplay mechanics:
-- 3D directional & ambient lighting + shaders
-- First & 3rd-person camera modes (C key)
-- Prop rotation freeze/lock (F key / RMB)
-- Hunter laser blaster visual effects + crosshair hitmarker
-- Hunter flashlight (L key)
-- Hider taunts (T key)
-- Procedural audio feedback (laser, morph, hit, scanner, taunt)
-- Interactive glowing objective beacons
-"""
-
 from __future__ import annotations
 
 import math
@@ -21,13 +9,15 @@ from direct.task import Task
 from panda3d.core import (
     AmbientLight, DirectionalLight, Spotlight, PerspectiveLens,
     GeomNode, CardMaker, LineSegs,
-    CollisionNode, CollisionBox, CollisionCapsule,
-    CollisionHandlerPusher, CollisionTraverser,
+    CollisionNode, CollisionBox, CollisionSphere, CollisionCapsule,
+    CollisionRay, CollisionSegment, CollisionPlane, Plane,
+    CollisionHandlerPusher, CollisionHandlerQueue, CollisionTraverser,
     LVecBase4f, LPoint3f, LVecBase3f, Vec3,
     WindowProperties,
     Shader,
     NodePath,
     loadPrcFileData,
+    BitMask32,
 )
 
 from config import settings
@@ -50,18 +40,12 @@ from ui.lobby import LobbyScreen
 from ui.hud import HUD
 from ui.results import ResultsScreen
 
-# ---------------------------------------------------------------------------
-# Panda3D window settings
-# ---------------------------------------------------------------------------
 loadPrcFileData("", "window-title Morph Hunt: The Object Among Us")
 loadPrcFileData("", "undecorated 0")
 loadPrcFileData("", "win-size 1280 720")
 loadPrcFileData("", "sync-video 1")
 loadPrcFileData("", "show-frame-rate-meter 0")
 
-# ---------------------------------------------------------------------------
-# Lit shader with vertex colors and normals for rich 3D shading
-# ---------------------------------------------------------------------------
 _VERT_GLSL = """
 #version 130
 uniform mat4 p3d_ModelViewProjectionMatrix;
@@ -84,7 +68,6 @@ in vec4 v_color;
 in vec3 v_normal;
 out vec4 fragColor;
 void main() {
-    // 2-point directional lighting for rich 3D depth
     vec3 light1 = normalize(vec3(0.5, 0.7, 0.9));
     vec3 light2 = normalize(vec3(-0.4, -0.6, 0.3));
     float diff1 = max(dot(v_normal, light1), 0.0) * 0.55;
@@ -104,9 +87,6 @@ def _c4(r, g, b, a=1.0) -> LVecBase4f:
     return LVecBase4f(r / 255.0, g / 255.0, b / 255.0, a)
 
 
-# ---------------------------------------------------------------------------
-# Box geometry builder with proper normals and vertex colours
-# ---------------------------------------------------------------------------
 def _make_box(render_root: NodePath, pos, scale, color_rgb, shader) -> NodePath:
     from panda3d.core import (
         GeomVertexFormat, GeomVertexData, GeomVertexWriter,
@@ -125,14 +105,13 @@ def _make_box(render_root: NodePath, pos, scale, color_rgb, shader) -> NodePath:
     col = (r, g, b, 1.0)
 
     hw, hh, hd = 0.5, 0.5, 0.5
-    # 6 faces: (normal, 4 corners)
     faces = [
-        ((1, 0, 0),  [(hw, -hd, -hh), (hw, hd, -hh), (hw, hd, hh), (hw, -hd, hh)]),     # +X
-        ((-1, 0, 0), [(-hw, hd, -hh), (-hw, -hd, -hh), (-hw, -hd, hh), (-hw, hd, hh)]),  # -X
-        ((0, 1, 0),  [(hw, hd, -hh), (-hw, hd, -hh), (-hw, hd, hh), (hw, hd, hh)]),      # +Y
-        ((0, -1, 0), [(-hw, -hd, -hh), (hw, -hd, -hh), (hw, -hd, hh), (-hw, -hd, hh)]),  # -Y
-        ((0, 0, 1),  [(-hw, -hd, hh), (hw, -hd, hh), (hw, hd, hh), (-hw, hd, hh)]),      # +Z (Up)
-        ((0, 0, -1), [(hw, -hd, -hh), (-hw, -hd, -hh), (-hw, hd, -hh), (hw, hd, -hh)]),  # -Z (Down)
+        ((1, 0, 0),  [(hw, -hd, -hh), (hw, hd, -hh), (hw, hd, hh), (hw, -hd, hh)]),
+        ((-1, 0, 0), [(-hw, hd, -hh), (-hw, -hd, -hh), (-hw, -hd, hh), (-hw, hd, hh)]),
+        ((0, 1, 0),  [(hw, hd, -hh), (-hw, hd, -hh), (-hw, hd, hh), (hw, hd, hh)]),
+        ((0, -1, 0), [(-hw, -hd, -hh), (hw, -hd, -hh), (hw, -hd, hh), (-hw, -hd, hh)]),
+        ((0, 0, 1),  [(-hw, -hd, hh), (hw, -hd, hh), (hw, hd, hh), (-hw, hd, hh)]),
+        ((0, 0, -1), [(hw, -hd, -hh), (-hw, -hd, -hh), (-hw, hd, -hh), (hw, hd, -hh)]),
     ]
 
     tris = GeomTriangles(Geom.UHStatic)
@@ -157,18 +136,16 @@ def _make_box(render_root: NodePath, pos, scale, color_rgb, shader) -> NodePath:
     return np
 
 
-# ---------------------------------------------------------------------------
-# State constants
-# ---------------------------------------------------------------------------
 STATE_MENU    = "menu"
 STATE_CONNECT = "connect"
 STATE_LOBBY   = "lobby"
 STATE_INGAME  = "ingame"
 
+WALL_MASK = BitMask32.bit(1)
+FLOOR_MASK = BitMask32.bit(2)
+PLAYER_FROM_MASK = BitMask32.bit(3)
 
-# ---------------------------------------------------------------------------
-# ClientApp
-# ---------------------------------------------------------------------------
+
 class ClientApp(ShowBase):
 
     def __init__(self):
@@ -182,10 +159,10 @@ class ClientApp(ShowBase):
             self.win.requestProperties(props)
         self.win.setClearColor(_c4(18, 20, 28))
 
-        # Shader
+        self.camLens.setNearFar(0.15, 500.0)
+
         self._shader = _make_shader()
 
-        # Camera & View modes
         self._cam_yaw   = 0.0
         self._cam_pitch = 0.0
         self._mouse_locked = False
@@ -194,23 +171,24 @@ class ClientApp(ShowBase):
         self._locked_player_yaw = 0.0
         self._vel_z = 0.0
         self._is_grounded = True
+        self._ground_z = 1.0
 
-        # Laser beam & VFX nodes
         self._laser_np = None
         self._laser_timer = 0.0
         self._flashlight_on = True
         self._flashlight = None
 
-        # Player collision & physics
         self.cTrav = CollisionTraverser()
+        self.cTrav.setRespectPrevTransform(True)
         self._pusher = CollisionHandlerPusher()
+        self._pusher.setHorizontal(True)
+        self._floor_handler = CollisionHandlerQueue()
+        self._floor_ray_np = None
 
-        # Networking
         self.net = NetworkClient()
         self.server_thread = None
         self.local_server  = None
 
-        # Game State
         self.state           = STATE_MENU
         self.current_phase   = PHASE_LOBBY
         self.current_time_left = 0
@@ -229,7 +207,6 @@ class ClientApp(ShowBase):
 
         self._object_hotbar = list(REGISTRY.keys())[:9]
 
-        # Geometry references
         self.level_nodes:  list[NodePath] = []
         self.remote_nodes: dict[str, NodePath] = {}
         self.objective_nodes: list[NodePath] = []
@@ -237,7 +214,6 @@ class ClientApp(ShowBase):
         self._player_visual: NodePath | None = None
         self._player_col:  NodePath | None = None
 
-        # UI
         self.menu   = MainMenu(self._on_host_clicked, self._on_join_clicked, self.userExit)
         self.connect_dialog: ConnectDialog | None = None
         self.lobby  = LobbyScreen(
@@ -253,7 +229,6 @@ class ClientApp(ShowBase):
 
         self._show_only(STATE_MENU)
 
-        # Keybinds
         self._keys: dict[str, bool] = {}
         for k in ("w", "a", "s", "d", "space", "shift", "escape",
                   "1","2","3","4","5","6","7","8","9",
@@ -261,12 +236,8 @@ class ClientApp(ShowBase):
             self.accept(k,        self._key_down, [k])
             self.accept(k + "-up",self._key_up,   [k])
 
-        # Main Loop Task
         self.taskMgr.add(self._main_loop, "main_loop")
 
-    # ==================================================================
-    # INPUT HANDLING
-    # ==================================================================
     def _key_down(self, key):
         self._keys[key] = True
         self._handle_press(key)
@@ -287,9 +258,7 @@ class ClientApp(ShowBase):
         if self.state != STATE_INGAME or self.paused:
             return
 
-        # ---- HIDER ACTIONS ----
         if self.my_role == ROLE_HIDER:
-            # 1-9 Transform
             if key.isdigit() and key != "0":
                 idx = int(key) - 1
                 if 0 <= idx < len(self._object_hotbar):
@@ -299,7 +268,6 @@ class ClientApp(ShowBase):
                     self._update_local_player_model()
                     self.net.send({"type": MSG_TRANSFORM, "object_type": obj_key})
 
-            # F or Mouse3 (RMB): Freeze / Lock Prop Rotation
             elif key in ("f", "mouse3"):
                 self._rotation_locked = not self._rotation_locked
                 if self._rotation_locked:
@@ -308,11 +276,9 @@ class ClientApp(ShowBase):
                 else:
                     self.hud.push_clue("[Unlocked Rotation]")
 
-            # C: Toggle 3rd Person View
             elif key == "c":
                 self._third_person = not self._third_person
 
-            # T: Taunt Whistle
             elif key == "t":
                 now = time.time()
                 if (now - self.last_taunt_press) >= settings.TAUNT_COOLDOWN:
@@ -321,23 +287,18 @@ class ClientApp(ShowBase):
                     self.net.send({"type": MSG_TAUNT})
                     self.hud.push_clue("You taunted the Hunter! (+20 XP)")
 
-            # E: Interact with Objective
             elif key == "e":
                 self.net.send({"type": MSG_INTERACT})
 
-        # ---- HUNTER ACTIONS ----
         elif self.my_role == ROLE_HUNTER:
-            # LMB: Fire Energy Blaster
             if key == "mouse1":
                 self._fire_blaster()
 
-            # Q: Scanner Sonar
             elif key == "q":
                 self.last_scanner_press = time.time()
                 SoundManager.scanner()
                 self.net.send({"type": MSG_SCANNER})
 
-            # L: Toggle Flashlight
             elif key == "l":
                 self._toggle_flashlight()
 
@@ -347,7 +308,6 @@ class ClientApp(ShowBase):
         self.net.send({"type": MSG_ATTACK})
 
     def _spawn_laser_tracer(self):
-        """Draw an instant glowing cyan laser beam from player camera forward."""
         if self._laser_np:
             self._laser_np.removeNode()
 
@@ -370,9 +330,6 @@ class ClientApp(ShowBase):
         if self._flashlight:
             self._flashlight.node().setActive(self._flashlight_on)
 
-    # ==================================================================
-    # MOUSE LOCK
-    # ==================================================================
     def _set_mouse_locked(self, locked: bool):
         self._mouse_locked = locked
         if hasattr(self.win, "requestProperties"):
@@ -387,9 +344,6 @@ class ClientApp(ShowBase):
             cy = self.win.getProperties().getYSize() // 2
             self.win.movePointer(0, cx, cy)
 
-    # ==================================================================
-    # SCREEN TRANSITIONS
-    # ==================================================================
     def _show_only(self, state: str):
         self.state = state
         self.menu.hide()
@@ -409,9 +363,6 @@ class ClientApp(ShowBase):
             self.hud.show()
             self._set_mouse_locked(True)
 
-    # ==================================================================
-    # MENU & LOBBY CALLBACKS
-    # ==================================================================
     def _on_host_clicked(self):
         self.state = STATE_CONNECT
         self.connect_dialog = ConnectDialog(self._do_host, self._cancel_dialog, mode="host")
@@ -494,10 +445,9 @@ class ClientApp(ShowBase):
     def _on_results_continue(self):
         self._show_only(STATE_LOBBY)
 
-    # ==================================================================
-    # LEVEL BUILDING
-    # ==================================================================
     def _clear_level(self):
+        self.cTrav.clearColliders()
+
         for np in self.level_nodes:
             np.removeNode()
         self.level_nodes.clear()
@@ -516,6 +466,8 @@ class ClientApp(ShowBase):
         if self._player_visual:
             self._player_visual.removeNode()
             self._player_visual = None
+        self._player_col = None
+        self._floor_ray_np = None
 
         self.win.setClearColor(_c4(10, 12, 20))
 
@@ -524,36 +476,61 @@ class ClientApp(ShowBase):
         self.current_map = level_key
         level_def = load_level(level_key)
 
-        # 1. Map geometry (Panda3D coordinate mapping: X=x, Y=z, Z=y)
+        level_root = self.render.attachNewNode("level_root")
+        self.level_nodes.append(level_root)
+
         for g in level_def.get("geometry", []):
             p = g["position"]
             s = g["scale"]
             np = _make_box(
-                self.render,
+                level_root,
                 pos=(p[0], p[2], p[1]),
                 scale=(s[0], s[2], s[1]),
                 color_rgb=g["color"],
                 shader=self._shader,
             )
-            # Only add collision to solid walls and props (not floors, to avoid vertical collision fighting)
-            if g.get("solid", True) and g.get("type") != "floor":
-                col_node = CollisionNode("wall_col")
-                col_node.addSolid(CollisionBox(LPoint3f(0, 0, 0), 0.5, 0.5, 0.5))
-                col_np = np.attachNewNode(col_node)
-                self.level_nodes.append(col_np)
-            self.level_nodes.append(np)
 
-        # 2. Continuous world floor visual
+            is_floor = g.get("type") == "floor"
+            is_solid = g.get("solid", True)
+
+            if is_solid and not is_floor:
+                col_node = CollisionNode("wall_col")
+                half_x = max(abs(s[0]) * 0.5, 0.05)
+                half_y = max(abs(s[2]) * 0.5, 0.05)
+                half_z = max(abs(s[1]) * 0.5, 0.05)
+                col_node.addSolid(
+                    CollisionBox(LPoint3f(0, 0, 0), half_x, half_y, half_z)
+                )
+                col_node.setIntoCollideMask(WALL_MASK)
+                col_node.setFromCollideMask(BitMask32.allOff())
+                col_np = np.attachNewNode(col_node)
+
+            if is_floor and is_solid:
+                col_node = CollisionNode("floor_col")
+                half_x = max(abs(s[0]) * 0.5, 0.05)
+                half_y = max(abs(s[2]) * 0.5, 0.05)
+                half_z = max(abs(s[1]) * 0.5, 0.05)
+                col_node.addSolid(
+                    CollisionBox(LPoint3f(0, 0, 0), half_x, half_y, half_z)
+                )
+                col_node.setIntoCollideMask(FLOOR_MASK)
+                col_node.setFromCollideMask(BitMask32.allOff())
+                col_np = np.attachNewNode(col_node)
+
         wf = _make_box(
-            self.render,
+            level_root,
             pos=(0, 0, -0.65),
-            scale=(80, 80, 1),
+            scale=(200, 200, 1),
             color_rgb=(35, 38, 45),
             shader=self._shader,
         )
+        ground_col = CollisionNode("ground_floor_col")
+        ground_col.addSolid(CollisionBox(LPoint3f(0, 0, 0), 100, 100, 0.5))
+        ground_col.setIntoCollideMask(FLOOR_MASK)
+        ground_col.setFromCollideMask(BitMask32.allOff())
+        wf.attachNewNode(ground_col)
         self.level_nodes.append(wf)
 
-        # 3. Static hider spawn objects
         for spot in level_def.get("hider_spawn_objects", []):
             obj = REGISTRY.get(spot["key"])
             if not obj:
@@ -561,7 +538,7 @@ class ClientApp(ShowBase):
             p = spot["position"]
             s = obj.scale
             np = _make_box(
-                self.render,
+                level_root,
                 pos=(p[0], p[2], p[1]),
                 scale=(s[0], s[2], s[1]),
                 color_rgb=obj.color,
@@ -569,11 +546,10 @@ class ClientApp(ShowBase):
             )
             self.level_nodes.append(np)
 
-        # 4. Interactive objective markers (glowing yellow/orange beacons)
         for obj in level_def.get("objectives", []):
             p = obj["position"]
             np = _make_box(
-                self.render,
+                level_root,
                 pos=(p[0], p[2], p[1]),
                 scale=(0.8, 0.8, 1.2),
                 color_rgb=(255, 180, 40),
@@ -582,35 +558,65 @@ class ClientApp(ShowBase):
             self.objective_nodes.append(np)
             self.level_nodes.append(np)
 
-        # 5. Clear color
-        self.win.setClearColor(_c4(20, 24, 32))
+        self.win.setClearColor(_c4(18, 22, 30))
 
-        # 6. Player Root Node
+        self._setup_lighting()
+
         spawn = level_def.get("hunter_spawns", [[0, 1.0, 0]])[0]
         self._player_np = self.render.attachNewNode("player_root")
         self._player_np.setPos(spawn[0], spawn[2], 1.0)
         self._vel_z = 0.0
         self._is_grounded = True
+        self._ground_z = 1.0
 
-        # Player visual model (visible in 3rd person)
         self._player_visual = self._player_np.attachNewNode("player_visual")
         self._update_local_player_model()
 
-        # Camera
         self.camera.reparentTo(self._player_np)
         self.camera.setPos(0, 0, 0.6)
         self.camera.setHpr(0, 0, 0)
         self._cam_yaw   = 0.0
         self._cam_pitch = 0.0
 
-        # Collision Capsule for horizontal wall sliding
         c_node = CollisionNode("player_col")
-        capsule = CollisionCapsule(0, 0, -0.3, 0, 0, 0.3, 0.35)
+        capsule = CollisionSphere(0, 0, 0, 0.35)
         c_node.addSolid(capsule)
+        c_node.setFromCollideMask(WALL_MASK)
+        c_node.setIntoCollideMask(BitMask32.allOff())
+
         self._player_col = self._player_np.attachNewNode(c_node)
+
         self._pusher.addCollider(self._player_col, self._player_np)
         self.cTrav.addCollider(self._player_col, self._pusher)
 
+        ray_node = CollisionNode("player_floor_ray")
+        ray = CollisionRay(0, 0, 0.5, 0, 0, -1)
+        ray_node.addSolid(ray)
+        ray_node.setFromCollideMask(FLOOR_MASK)
+        ray_node.setIntoCollideMask(BitMask32.allOff())
+        self._floor_ray_np = self._player_np.attachNewNode(ray_node)
+        self.cTrav.addCollider(self._floor_ray_np, self._floor_handler)
+
+    def _setup_lighting(self):
+        alight = AmbientLight("ambient")
+        alight.setColor(LVecBase4f(0.35, 0.35, 0.40, 1.0))
+        alight_np = self.render.attachNewNode(alight)
+        self.render.setLight(alight_np)
+        self.level_nodes.append(alight_np)
+
+        dlight = DirectionalLight("sun")
+        dlight.setColor(LVecBase4f(0.6, 0.55, 0.5, 1.0))
+        dlight_np = self.render.attachNewNode(dlight)
+        dlight_np.setHpr(45, -60, 0)
+        self.render.setLight(dlight_np)
+        self.level_nodes.append(dlight_np)
+
+        dlight2 = DirectionalLight("fill")
+        dlight2.setColor(LVecBase4f(0.2, 0.22, 0.3, 1.0))
+        dlight2_np = self.render.attachNewNode(dlight2)
+        dlight2_np.setHpr(-135, -30, 0)
+        self.render.setLight(dlight2_np)
+        self.level_nodes.append(dlight2_np)
 
     def _update_local_player_model(self):
         if not self._player_visual:
@@ -637,9 +643,6 @@ class ClientApp(ShowBase):
                 shader=self._shader,
             )
 
-    # ==================================================================
-    # NETWORK MESSAGE PROCESSING
-    # ==================================================================
     def _process_network(self):
         for msg in self.net.poll():
             mtype = msg.get("type")
@@ -703,7 +706,7 @@ class ClientApp(ShowBase):
             if self.my_role == ROLE_HIDER:
                 self.hud.push_clue("Find a spot and disguise! [1-9] Morph  [F] Lock Angle")
             else:
-                self.hud.push_clue("Hiding phase — Hunters preparing...")
+                self.hud.push_clue("Hiding phase \u2014 Hunters preparing...")
         elif phase == PHASE_HUNTING:
             self.hud.push_clue("HUNTING BEGUN! Find the disguised objects!")
         elif phase == PHASE_LOBBY:
@@ -802,19 +805,14 @@ class ClientApp(ShowBase):
                 np.setScale(0.6, 0.6, 1.8)
                 np.setColor(_c4(70, 200, 90))
 
-        # Position mapping: [x, z, y]
         np.setPos(pos[0], pos[2], pos[1])
         np.setH(p.get("rotation_y", 0))
 
-    # ==================================================================
-    # MAIN LOOP
-    # ==================================================================
     def _main_loop(self, task):
         dt = globalClock.getDt()
 
         self._process_network()
 
-        # Laser beam decay
         if self._laser_np:
             self._laser_timer -= dt
             if self._laser_timer <= 0:
@@ -826,11 +824,7 @@ class ClientApp(ShowBase):
 
         return Task.cont
 
-    # ==================================================================
-    # PLAYER MOVEMENT & CAMERA
-    # ==================================================================
     def _update_player(self, dt: float):
-        # ---- Mouse look ------------------------------------------------
         if self._mouse_locked and self.mouseWatcherNode.hasMouse():
             md = self.win.getPointer(0)
             cx = self.win.getProperties().getXSize() // 2
@@ -848,7 +842,6 @@ class ClientApp(ShowBase):
             else:
                 self._player_np.setH(self._locked_player_yaw)
 
-            # Camera 1st vs 3rd Person
             if self._third_person and self.my_role == ROLE_HIDER:
                 rad_yaw = math.radians(self._cam_yaw)
                 cam_dist = 2.4
@@ -860,7 +853,6 @@ class ClientApp(ShowBase):
                 self.camera.setPos(0, 0, 0.6)
                 self.camera.setHpr(0 if not self._rotation_locked else self._cam_yaw - self._locked_player_yaw, self._cam_pitch, 0)
 
-        # ---- Movement --------------------------------------------------
         speed = settings.PLAYER_WALK_SPEED
         if self.my_role == ROLE_HIDER and self.my_transformed:
             obj = REGISTRY.get(self.my_transformed)
@@ -877,7 +869,6 @@ class ClientApp(ShowBase):
         if self._k("a"): right   -= 1
 
         if forward or right:
-            # If player moves while rotation was locked, unlock rotation
             if self._rotation_locked:
                 self._rotation_locked = False
 
@@ -893,29 +884,29 @@ class ClientApp(ShowBase):
             pos = self._player_np.getPos()
             self._player_np.setPos(pos.x + vx, pos.y + vy, pos.z)
 
-        # Jump input
         if self._k("space") and self._is_grounded:
             self._vel_z = 6.5
             self._is_grounded = False
 
-        # Stable vertical physics (smooth jump & rock-solid ground lock at Z=1.0)
         if not self._is_grounded:
             self._vel_z -= 22.0 * dt
             pos = self._player_np.getPos()
             new_z = pos.z + self._vel_z * dt
-            if new_z <= 1.0:
-                new_z = 1.0
+            if new_z <= self._ground_z:
+                new_z = self._ground_z
                 self._vel_z = 0.0
                 self._is_grounded = True
             self._player_np.setZ(new_z)
         else:
-            self._player_np.setZ(1.0)
+            self._player_np.setZ(self._ground_z)
 
-        # Physics collision with walls
         self.cTrav.traverse(self.render)
-        self._player_np.setZ(1.0 if self._is_grounded else self._player_np.getZ())
 
-        # ---- Send Snapshot Input ---------------------------------------
+        if self._is_grounded:
+            self._player_np.setZ(self._ground_z)
+
+        self._update_ground_z()
+
         now = time.time()
         if now - self.last_input_sent >= (1.0 / settings.SNAPSHOT_RATE):
             self.last_input_sent = now
@@ -932,7 +923,6 @@ class ClientApp(ShowBase):
                 "position": [p.x, p.z, p.y],
             })
 
-        # ---- HUD Prompts -----------------------------------------------
         if self.my_role == ROLE_HUNTER:
             cooldown_left = max(
                 0.0, settings.SCANNER_COOLDOWN - (now - self.last_scanner_press)
@@ -951,3 +941,20 @@ class ClientApp(ShowBase):
             else:
                 hint = f"[1-9] Choose Morph  |  {rot_status}  |  {view_status}  |  [T] Taunt"
             self.hud.set_transform_hint(hint)
+
+    def _update_ground_z(self):
+        if not self._floor_ray_np:
+            return
+
+        best_z = -0.15
+        num = self._floor_handler.getNumEntries()
+        if num > 0:
+            self._floor_handler.sortEntries()
+            for i in range(num):
+                entry = self._floor_handler.getEntry(i)
+                pt = entry.getSurfacePoint(self.render)
+                if pt.z > best_z:
+                    best_z = pt.z
+
+        target_ground = best_z + 1.0
+        self._ground_z = target_ground

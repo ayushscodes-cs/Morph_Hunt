@@ -300,17 +300,24 @@ class GameServer:
 
     # ------------------------------------------------------------------
     def _try_start_round(self):
-        # If solo (only 1 human and no bots), automatically spawn 2 bots!
-        if len(self.players) == 1:
-            for _ in range(2):
-                bot_id = self._next_id
-                self._next_id += 1
-                bot_name = BOT_NAMES[len(self.bots) % len(BOT_NAMES)]
-                bot_player = PlayerState(player_id=bot_id, name=bot_name)
-                bot_player.ready = True
-                self.players[bot_id] = bot_player
-                self.bots[bot_id] = AIBot(bot_player)
-            self._broadcast_lobby_state()
+        host_conn = self.connections.get(self.host_player_id)
+        host_player = self.players.get(self.host_player_id)
+
+        if not host_player or not host_player.ready:
+            if host_conn:
+                host_conn.send({"type": MSG_ERROR, "message": "Host must be ready"})
+            return
+
+        total_players = len(self.players)
+        if total_players < settings.MIN_PLAYERS_TO_START:
+            if host_conn:
+                host_conn.send({"type": MSG_ERROR, "message": f"Need at least {settings.MIN_PLAYERS_TO_START} players"})
+            return
+
+        if self.round_mgr.phase != PHASE_LOBBY:
+            if host_conn:
+                host_conn.send({"type": MSG_ERROR, "message": "Game already in progress"})
+            return
 
         self.level_def = load_level(self.round_mgr.map_key)
         self.objective_mgr.load_for_level(self.level_def)

@@ -29,19 +29,17 @@ def objective(obj_id, kind, position, label):
     return {"id": obj_id, "kind": kind, "position": position, "label": label}
 
 
-def rectangular_room(name, center, size, wall_height=3.2, floor_color=(75, 75, 82), wall_color=(150, 150, 160), door_wall="front", door_width=2.4):
-    """
-    Builds a themed rectangular room with floor and 4 walls.
-    door_wall: 'front' (-z), 'back' (+z), 'left' (-x), 'right' (+x), or 'none'.
-    Returns (room_meta, geometry_list).
-    """
+def rectangular_room(name, center, size, wall_height=3.2, floor_color=(75, 75, 82), wall_color=(150, 150, 160), door_wall="front", door_width=2.4, color=None):
+    if color is not None:
+        floor_color = color
+        wall_color = color
+
     cx, cz = center
     w, d = size
     geo = [floor((cx, cz), (w, d), color=floor_color)]
     t = 0.3
     hw = wall_height / 2
 
-    # Back wall (+z)
     if door_wall == "back":
         seg = (w - door_width) / 2
         geo.append(wall((cx - door_width / 2 - seg / 2, hw, cz + d / 2), (seg, wall_height, t), color=wall_color))
@@ -49,7 +47,6 @@ def rectangular_room(name, center, size, wall_height=3.2, floor_color=(75, 75, 8
     else:
         geo.append(wall((cx, hw, cz + d / 2), (w, wall_height, t), color=wall_color))
 
-    # Front wall (-z)
     if door_wall == "front":
         seg = (w - door_width) / 2
         geo.append(wall((cx - door_width / 2 - seg / 2, hw, cz - d / 2), (seg, wall_height, t), color=wall_color))
@@ -57,7 +54,6 @@ def rectangular_room(name, center, size, wall_height=3.2, floor_color=(75, 75, 8
     else:
         geo.append(wall((cx, hw, cz - d / 2), (w, wall_height, t), color=wall_color))
 
-    # Left wall (-x)
     if door_wall == "left":
         seg = (d - door_width) / 2
         geo.append(wall((cx - w / 2, hw, cz - door_width / 2 - seg / 2), (t, wall_height, seg), color=wall_color))
@@ -65,7 +61,6 @@ def rectangular_room(name, center, size, wall_height=3.2, floor_color=(75, 75, 8
     else:
         geo.append(wall((cx - w / 2, hw, cz), (t, wall_height, d), color=wall_color))
 
-    # Right wall (+x)
     if door_wall == "right":
         seg = (d - door_width) / 2
         geo.append(wall((cx + w / 2, hw, cz - door_width / 2 - seg / 2), (t, wall_height, seg), color=wall_color))
@@ -73,5 +68,10 @@ def rectangular_room(name, center, size, wall_height=3.2, floor_color=(75, 75, 8
     else:
         geo.append(wall((cx + w / 2, hw, cz), (t, wall_height, d), color=wall_color))
 
-    room_meta = {"name": name, "position": (cx, cz), "size": (w, d)}
+    room_meta = {
+        "name": name,
+        "position": (cx, cz),
+        "size": (w, d)
+    }
+
     return room_meta, geo
