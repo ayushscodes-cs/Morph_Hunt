@@ -33,23 +33,28 @@ def _label(parent, text, pos, scale, fg, align=TextNode.ACenter, shadow=None):
 
 
 def _menu_btn(parent, text, pos, command, fg, hover_fg=None, scale=0.065, width=4.0):
+    from direct.gui.DirectGuiGlobals import ENTER, EXIT
     hfg = hover_fg or fg
-    return DirectButton(
+    btn = DirectButton(
         parent=parent,
         text=text,
         scale=scale,
         text_fg=fg,
-        text0_fg=fg,
-        text1_fg=_c(255, 255, 255),
-        text2_fg=_c(255, 255, 255), # Bright hover
-        text3_fg=_c(80, 80, 80),
         text_shadow=(0, 0, 0, 1.0),
-        frameColor=( (0,0,0,0), (0,0,0,0), (0,0,0,0), (0,0,0,0) ),
-        frameSize=(-width, width, -0.55, 0.9),
-        relief=1,
+        frameColor=(0,0,0,0),
+        relief=None,
         pos=pos,
         command=command,
     )
+    def on_enter(event):
+        btn["text_fg"] = hfg
+        btn.setScale(scale * 1.15)
+    def on_exit(event):
+        btn["text_fg"] = fg
+        btn.setScale(scale)
+    btn.bind(ENTER, on_enter)
+    btn.bind(EXIT, on_exit)
+    return btn
 
 
 class MainMenu:

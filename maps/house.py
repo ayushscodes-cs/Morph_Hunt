@@ -39,16 +39,16 @@ def _room_with_doors(name, center, size, wall_height, floor_color, wall_color, d
             geo.append(wall_pos_fn(seg_center, seg_len))
 
     def front_wall_fn(offset, length):
-        return wall((cx + offset, hw, cz - d / 2), (length, wall_height, t), color=wall_color)
+        return wall((cx + offset, hw, cz - d / 2 + t / 2), (length, wall_height, t), color=wall_color)
 
     def back_wall_fn(offset, length):
-        return wall((cx + offset, hw, cz + d / 2), (length, wall_height, t), color=wall_color)
+        return wall((cx + offset, hw, cz + d / 2 - t / 2), (length, wall_height, t), color=wall_color)
 
     def left_wall_fn(offset, length):
-        return wall((cx - w / 2, hw, cz + offset), (t, wall_height, length), color=wall_color)
+        return wall((cx - w / 2 + t / 2, hw, cz + offset), (t, wall_height, length), color=wall_color)
 
     def right_wall_fn(offset, length):
-        return wall((cx + w / 2, hw, cz + offset), (t, wall_height, length), color=wall_color)
+        return wall((cx + w / 2 - t / 2, hw, cz + offset), (t, wall_height, length), color=wall_color)
 
     _wall_with_openings(front_wall_fn, w, front_doors, "x")
     _wall_with_openings(back_wall_fn, w, back_doors, "x")

@@ -3,6 +3,7 @@ import os
 import builtins
 
 from direct.gui.DirectGui import DirectFrame, DirectButton, DirectLabel
+# pyrefly: ignore [missing-import]
 from panda3d.core import TextNode, LVecBase4f, Filename, CardMaker
 
 from config import settings
@@ -12,7 +13,7 @@ def _c(r, g, b, a=1.0):
     return LVecBase4f(r / 255, g / 255, b / 255, a)
 
 
-def _label(parent, text, pos, scale, fg, align=TextNode.ALeft, shadow=None):
+def _label(parent, text, pos, scale, fg, align=TextNode.ALeft, shadow=(0, 0, 0, 0.8)):
     kwargs = {}
     if shadow:
         kwargs["text_shadow"] = shadow
@@ -30,23 +31,28 @@ def _label(parent, text, pos, scale, fg, align=TextNode.ALeft, shadow=None):
 
 
 def _btn(parent, text, pos, command, fg, hover_fg=None, scale=0.060, width=3.8):
+    from direct.gui.DirectGuiGlobals import ENTER, EXIT
     hfg = hover_fg or fg
-    return DirectButton(
+    btn = DirectButton(
         parent=parent,
         text=text,
         scale=scale,
         text_fg=fg,
-        text0_fg=fg,
-        text1_fg=_c(255, 255, 255),
-        text2_fg=_c(255, 255, 255),
-        text3_fg=_c(65, 65, 65),
         text_shadow=(0, 0, 0, 1.0),
-        frameColor=( (0,0,0,0), (0,0,0,0), (0,0,0,0), (0,0,0,0) ),
-        frameSize=(-width, width, -0.5, 0.85),
-        relief=1,
+        frameColor=(0,0,0,0),
+        relief=None,
         pos=pos,
         command=command,
     )
+    def on_enter(event):
+        btn["text_fg"] = hfg
+        btn.setScale(scale * 1.15)
+    def on_exit(event):
+        btn["text_fg"] = fg
+        btn.setScale(scale)
+    btn.bind(ENTER, on_enter)
+    btn.bind(EXIT, on_exit)
+    return btn
 
 
 class LobbyScreen:

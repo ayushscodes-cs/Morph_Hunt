@@ -98,6 +98,7 @@ class PlayerState:
             "health": self.health,
             "position": self.position,
             "rotation_y": self.rotation_y,
+            "velocity": self.move_input,
         }
         if self.role == "hider":
             data["transformed_into"] = self.transformed_into

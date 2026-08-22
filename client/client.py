@@ -6,13 +6,14 @@ import time
 
 from direct.showbase.ShowBase import ShowBase
 from direct.task import Task
+# pyrefly: ignore [missing-import]
 from panda3d.core import (
     AmbientLight, DirectionalLight, Spotlight, PerspectiveLens,
     GeomNode, CardMaker, LineSegs,
     CollisionNode, CollisionBox, CollisionSphere, CollisionCapsule,
     CollisionRay, CollisionSegment, CollisionPlane, Plane,
     CollisionHandlerPusher, CollisionHandlerQueue, CollisionTraverser,
-    LVecBase4f, LPoint3f, LVecBase3f, Vec3,
+    LVecBase4f, LPoint3f, LVecBase3f, Vec3, LVector3f,
     WindowProperties,
     Shader,
     NodePath,
@@ -72,8 +73,8 @@ void main() {
     vec3 light2 = normalize(vec3(-0.4, -0.6, 0.3));
     float diff1 = max(dot(v_normal, light1), 0.0) * 0.55;
     float diff2 = max(dot(v_normal, light2), 0.0) * 0.25;
-    float ambient = 0.45;
-    float brightness = clamp(ambient + diff1 + diff2, 0.2, 1.1);
+    float ambient = 0.75;
+    float brightness = clamp(ambient + diff1 + diff2, 0.3, 1.3);
     fragColor = vec4(v_color.rgb * brightness, v_color.a);
 }
 """
@@ -87,7 +88,57 @@ def _c4(r, g, b, a=1.0) -> LVecBase4f:
     return LVecBase4f(r / 255.0, g / 255.0, b / 255.0, a)
 
 
-def _make_box(render_root: NodePath, pos, scale, color_rgb, shader) -> NodePath:
+# pyrefly: ignore [missing-import]
+from panda3d.core import get_model_path, Filename
+from direct.actor.Actor import Actor
+import os
+
+# Add our assets dir
+_base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+get_model_path().appendDirectory(Filename.fromOsSpecific(os.path.join(_base_dir, 'assets/models/furniture/Models')).getFullpath())
+get_model_path().appendDirectory(Filename.fromOsSpecific(os.path.join(_base_dir, 'assets/models/characters/Model')).getFullpath())
+get_model_path().appendDirectory(Filename.fromOsSpecific(os.path.join(_base_dir, 'assets/models/characters/Animations')).getFullpath())
+
+PROP_MODEL_MAP = {
+    "sofa": "loungeSofaLong.obj", "sofa_side": "loungeChair.obj",
+    "coffee_table": "tableCoffee.obj", "tv_stand": "cabinetTelevision.obj",
+    "tv": "televisionModern.obj", "bookshelf": "bookcaseOpen.obj",
+    "counter_l": "kitchenCabinet.obj", "counter_r": "kitchenCabinet.obj",
+    "island": "kitchenBar.obj", "fridge": "kitchenFridge.obj",
+    "stove": "kitchenStove.obj", "sink": "kitchenSink.obj",
+    "dining_table": "table.obj", "dining_chair_1": "chair.obj",
+    "dining_chair_2": "chair.obj", "dining_chair_3": "chair.obj",
+    "dining_chair_4": "chair.obj", "family_sofa": "loungeSofa.obj",
+    "family_table": "tableCoffeeSquare.obj", "armchair": "loungeChairRelax.obj",
+    "bed_master": "bedDouble.obj", "wardrobe_master": "bookcaseClosedDoors.obj",
+    "nightstand_1": "sideTableDrawers.obj", "nightstand_2": "sideTableDrawers.obj",
+    "bed_2": "bedSingle.obj", "bed_3": "bedSingle.obj", "desk_2": "desk.obj",
+    "desk_3": "desk.obj", "wardrobe_2": "bookcaseClosedDoors.obj",
+    "shelf_3": "bookcaseOpen.obj", "bath_sink_1": "bathroomSink.obj",
+    "bath_sink_2": "bathroomSink.obj", "bath_tub": "bathtub.obj",
+    "bath_toilet": "toilet.obj", "garage_car": "cardboardBoxClosed.obj",
+    "garage_shelf": "bookcaseOpen.obj", "garage_toolbox": "cardboardBoxClosed.obj",
+    "bmt_pillar_1": "cardboardBoxClosed.obj", "bmt_pillar_2": "cardboardBoxClosed.obj",
+    "bmt_pillar_3": "cardboardBoxClosed.obj", "bmt_pillar_4": "cardboardBoxClosed.obj",
+    "bmt_shelf_1": "bookcaseOpen.obj", "bmt_shelf_2": "bookcaseOpen.obj",
+    "bmt_workbench": "desk.obj", "bmt_boiler": "washer.obj",
+    "bmt_storage_rack": "bookcaseOpen.obj", "terrace_table": "table.obj",
+    "terrace_chair_1": "chair.obj", "terrace_chair_2": "chair.obj",
+    "terrace_planter_1": "pottedPlant.obj", "terrace_planter_2": "pottedPlant.obj",
+    "terrace_bench": "bench.obj", "yard_tree_1": "plantSmall1.obj",
+    "yard_tree_2": "plantSmall2.obj", "yard_tree_3": "plantSmall1.obj",
+    "yard_tree_4": "plantSmall2.obj", "garden_bench": "bench.obj",
+    "garden_table": "tableRound.obj", "garden_chair_1": "chair.obj",
+    "garden_chair_2": "chair.obj", "garden_shed": "cardboardBoxClosed.obj",
+    "garden_swing": "bench.obj", "garden_fountain": "bathroomSink.obj",
+    "mailbox": "trashcan.obj", "garden_gnome": "pottedPlant.obj",
+    "chair": "chair.obj", "plant": "pottedPlant.obj", "lamp": "lampRoundFloor.obj",
+    "box": "cardboardBoxClosed.obj", "bin": "trashcan.obj", "monitor": "computerScreen.obj",
+    "barrel": "trashcan.obj", "crate": "cardboardBoxClosed.obj", "cart": "bench.obj",
+    "table": "tableCoffee.obj",
+}
+
+def _make_box(render_root, pos, scale, color_rgb, shader):
     from panda3d.core import (
         GeomVertexFormat, GeomVertexData, GeomVertexWriter,
         Geom, GeomTriangles, GeomNode,
@@ -136,6 +187,62 @@ def _make_box(render_root: NodePath, pos, scale, color_rgb, shader) -> NodePath:
     return np
 
 
+def _make_prop(parent, model_name, pos, target_scale):
+    try:
+        import os
+        from panda3d.core import Filename
+        workspace_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        assets_dir = os.path.join(workspace_dir, "assets", "models", "furniture", "Models")
+        model_path = Filename.fromOsSpecific(os.path.join(assets_dir, model_name)).getFullpath()
+        model = base.loader.loadModel(model_path)
+    except:
+        return None
+    model.reparentTo(parent)
+    model.setPos(pos)
+    
+    # Calculate scale factor to match target_scale (w, h, d in game coords)
+    min_pt, max_pt = model.getTightBounds()
+    dims = max_pt - min_pt
+    if dims.x > 0 and dims.y > 0 and dims.z > 0:
+        model.setScale(target_scale[0] / dims.x, target_scale[2] / dims.y, target_scale[1] / dims.z)
+    
+    # Kenney models often need a bit of adjustment, center them if necessary
+    model.setPos(pos[0], pos[1] + target_scale[1]*0.5, pos[2] - target_scale[2]*0.5)
+    return model
+
+def _build_character(parent):
+    try:
+        import os
+        from panda3d.core import Filename
+        workspace_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        char_dir = os.path.join(workspace_dir, "assets", "models", "characters")
+        
+        # Paths for Actor must be Panda3D-friendly strings if they are absolute.
+        # But wait, Filename.fromOsSpecific(path).getFullpath() gives a Panda3D absolute path
+        model_path = Filename.fromOsSpecific(os.path.join(char_dir, "Model", "characterMedium.fbx")).getFullpath()
+        idle_path = Filename.fromOsSpecific(os.path.join(char_dir, "Animations", "idle.fbx")).getFullpath()
+        run_path = Filename.fromOsSpecific(os.path.join(char_dir, "Animations", "run.fbx")).getFullpath()
+        jump_path = Filename.fromOsSpecific(os.path.join(char_dir, "Animations", "jump.fbx")).getFullpath()
+
+        actor = Actor(model_path, {
+            "idle": idle_path,
+            "run": run_path,
+            "jump": jump_path
+        })
+        actor.reparentTo(parent)
+        actor.setScale(1.2) # Default character scale
+        actor.setPos(0, 0, -0.9) # Align feet with capsule bottom
+        # Adjust rotation because Kenney models might face Z or Y
+        actor.setH(180) 
+        actor.loop("idle")
+        return actor
+    except Exception as e:
+        print("Failed to load character:", e)
+        return None
+
+
+
+
 STATE_MENU    = "menu"
 STATE_CONNECT = "connect"
 STATE_LOBBY   = "lobby"
@@ -182,6 +289,16 @@ class ClientApp(ShowBase):
         self.cTrav.setRespectPrevTransform(True)
         self._pusher = CollisionHandlerPusher()
         self._pusher.setHorizontal(True)
+
+        self.cam_trav = CollisionTraverser("cam_trav")
+        self._cam_handler = CollisionHandlerQueue()
+        self._cam_seg = CollisionSegment(0,0,0, 0,1,0)
+        cam_node = CollisionNode("cam_ray")
+        cam_node.addSolid(self._cam_seg)
+        cam_node.setFromCollideMask(WALL_MASK | FLOOR_MASK)
+        cam_node.setIntoCollideMask(BitMask32.allOff())
+        self._cam_ray_np = self.render.attachNewNode(cam_node)
+        self.cam_trav.addCollider(self._cam_ray_np, self._cam_handler)
         self._floor_handler = CollisionHandlerQueue()
         self._floor_ray_np = None
 
@@ -482,13 +599,25 @@ class ClientApp(ShowBase):
         for g in level_def.get("geometry", []):
             p = g["position"]
             s = g["scale"]
-            np = _make_box(
-                level_root,
-                pos=(p[0], p[2], p[1]),
-                scale=(s[0], s[2], s[1]),
-                color_rgb=g["color"],
-                shader=self._shader,
-            )
+            
+            is_floor = g.get("type") == "floor"
+            is_prop = g.get("type") == "prop"
+            is_solid = g.get("solid", True)
+            
+            np = None
+            if is_prop and g.get("kind") in PROP_MODEL_MAP:
+                # Try loading the real 3D model
+                np = _make_prop(level_root, PROP_MODEL_MAP[g["kind"]], (p[0], p[2], p[1]), s)
+            
+            if not np:
+                # Fallback to simple colored box, or if it's a wall/floor
+                np = _make_box(
+                    level_root,
+                    pos=(p[0], p[2], p[1]),
+                    scale=(s[0], s[2], s[1]),
+                    color_rgb=g["color"],
+                    shader=self._shader,
+                )
 
             is_floor = g.get("type") == "floor"
             is_solid = g.get("solid", True)
@@ -621,27 +750,46 @@ class ClientApp(ShowBase):
     def _update_local_player_model(self):
         if not self._player_visual:
             return
-        for child in self._player_visual.getChildren():
-            child.removeNode()
+            
+        current_state = (self.my_role, self.my_transformed if self.my_role == ROLE_HIDER else None)
+        if not hasattr(self, "_last_visual_state") or self._last_visual_state != current_state:
+            self._last_visual_state = current_state
+            for child in self._player_visual.getChildren():
+                child.removeNode()
+                
+            self.local_actor = None
 
-        if self.my_role == ROLE_HIDER and self.my_transformed:
-            obj = REGISTRY.get(self.my_transformed)
-            if obj:
-                _make_box(
-                    self._player_visual,
-                    pos=(0, 0, 0),
-                    scale=obj.scale,
-                    color_rgb=obj.color,
-                    shader=self._shader,
-                )
-        elif self.my_role == ROLE_HUNTER:
-            _make_box(
-                self._player_visual,
-                pos=(0, 0, 0),
-                scale=(0.6, 0.6, 1.8),
-                color_rgb=(210, 70, 70),
-                shader=self._shader,
-            )
+            if self.my_role == ROLE_HIDER and self.my_transformed:
+                obj = REGISTRY.get(self.my_transformed)
+                if obj:
+                    np = None
+                    if self.my_transformed in PROP_MODEL_MAP:
+                        np = _make_prop(self._player_visual, PROP_MODEL_MAP[self.my_transformed], (0,0,0), obj.scale)
+                    if not np:
+                        _make_box(
+                            self._player_visual,
+                            pos=(0, 0, 0),
+                            scale=obj.scale,
+                            color_rgb=obj.color,
+                            shader=self._shader,
+                        )
+            elif self.my_role == ROLE_HUNTER or self.my_role == ROLE_HIDER:
+                self.local_actor = _build_character(self._player_visual)
+                if not self.local_actor:
+                    _make_box(
+                        self._player_visual,
+                        pos=(0, 0, 0),
+                        scale=(0.6, 0.6, 1.8),
+                        color_rgb=(210, 70, 70) if self.my_role == ROLE_HUNTER else (70, 200, 90),
+                        shader=self._shader,
+                    )
+        
+        # Animate local actor if present
+        if hasattr(self, "local_actor") and self.local_actor:
+            current_anim = self.local_actor.getCurrentAnim()
+            if current_anim != "idle":
+                self.local_actor.loop("idle")
+
 
     def _process_network(self):
         for msg in self.net.poll():
@@ -773,37 +921,57 @@ class ClientApp(ShowBase):
         role  = p.get("role")
         alive = p.get("alive", True)
         pos   = p.get("position", [0, 1, 0])
+        vel   = p.get("velocity", [0, 0, 0])
 
         if not alive or p.get("eliminated"):
             if pid in self.remote_nodes:
                 self.remote_nodes[pid].hide()
             return
 
-        if pid not in self.remote_nodes:
-            self.remote_nodes[pid] = _make_box(
-                self.render,
-                pos=(0, 0, 0),
-                scale=(0.6, 0.6, 1.8),
-                color_rgb=(150, 150, 150),
-                shader=self._shader,
-            )
+        if not hasattr(self, "remote_state_tracking"):
+            self.remote_state_tracking = {}
+            self.remote_actors = {}
+
+        current_state = (role, p.get("transformed_into") if role == ROLE_HIDER else None)
+        last_state = self.remote_state_tracking.get(pid)
+        
+        if pid not in self.remote_nodes or last_state != current_state:
+            self.remote_state_tracking[pid] = current_state
+            
+            if pid in self.remote_nodes:
+                self.remote_nodes[pid].removeNode()
+                
+            self.remote_actors[pid] = None
+            np = self.render.attachNewNode(f"remote_player_{pid}")
+            
+            if role == ROLE_HIDER and current_state[1]:
+                obj = REGISTRY.get(current_state[1])
+                if obj:
+                    prop_np = None
+                    if current_state[1] in PROP_MODEL_MAP:
+                        prop_np = _make_prop(np, PROP_MODEL_MAP[current_state[1]], (0,0,0), obj.scale)
+                    if not prop_np:
+                        _make_box(np, pos=(0, 0, 0), scale=obj.scale, color_rgb=obj.color, shader=self._shader)
+            else:
+                actor = _build_character(np)
+                if actor:
+                    self.remote_actors[pid] = actor
+                else:
+                    _make_box(np, pos=(0, 0, 0), scale=(0.6, 0.6, 1.8), color_rgb=(210, 70, 70) if role == ROLE_HUNTER else (70, 200, 90), shader=self._shader)
+            
+            self.remote_nodes[pid] = np
 
         np = self.remote_nodes[pid]
         np.show()
-
-        if role == ROLE_HUNTER:
-            np.setScale(0.6, 0.6, 1.8)
-            np.setColor(_c4(210, 70, 70))
-        elif role == ROLE_HIDER:
-            transformed = p.get("transformed_into")
-            if transformed:
-                obj = REGISTRY.get(transformed)
-                if obj:
-                    np.setScale(obj.scale[0], obj.scale[2], obj.scale[1])
-                    np.setColor(_c4(*obj.color))
-            else:
-                np.setScale(0.6, 0.6, 1.8)
-                np.setColor(_c4(70, 200, 90))
+        
+        # Animate remote actor if present
+        actor = self.remote_actors.get(pid)
+        if actor:
+            speed = LVector3f(vel[0], vel[1], 0).length()
+            current_anim = actor.getCurrentAnim()
+            target_anim = "run" if speed > 0.5 else "idle"
+            if current_anim != target_anim:
+                actor.loop(target_anim)
 
         np.setPos(pos[0], pos[2], pos[1])
         np.setH(p.get("rotation_y", 0))
@@ -842,14 +1010,36 @@ class ClientApp(ShowBase):
             else:
                 self._player_np.setH(self._locked_player_yaw)
 
-            if self._third_person and self.my_role == ROLE_HIDER:
+            if self._third_person:
                 rad_yaw = math.radians(self._cam_yaw)
-                cam_dist = 2.4
+                max_cam_dist = 4.0
+                
+                head_pos = self._player_np.getPos(self.render) + LVector3f(0, 0, 1.2)
+                target_x = math.sin(rad_yaw) * max_cam_dist
+                target_y = -math.cos(rad_yaw) * max_cam_dist
+                target_pos = head_pos + LVector3f(target_x, target_y, 0)
+                
+                self._cam_seg.setPointA(head_pos)
+                self._cam_seg.setPointB(target_pos)
+                self.cam_trav.traverse(self.render)
+                
+                cam_dist = max_cam_dist
+                if self._cam_handler.getNumEntries() > 0:
+                    self._cam_handler.sortEntries()
+                    entry = self._cam_handler.getEntry(0)
+                    hit_pos = entry.getSurfacePoint(self.render)
+                    cam_dist = (hit_pos - head_pos).length() - 0.2
+                    if cam_dist < 0.2:
+                        cam_dist = 0.2
+                        
                 cam_x = math.sin(rad_yaw) * cam_dist
                 cam_y = -math.cos(rad_yaw) * cam_dist
-                self.camera.setPos(cam_x, cam_y, 1.2)
-                self.camera.setHpr(self._cam_yaw - self._player_np.getH(), self._cam_pitch, 0)
+                
+                self.camera.reparentTo(self.render)
+                self.camera.setPos(head_pos.x + cam_x, head_pos.y + cam_y, head_pos.z)
+                self.camera.setHpr(self._cam_yaw, self._cam_pitch, 0)
             else:
+                self.camera.reparentTo(self._player_np)
                 self.camera.setPos(0, 0, 0.6)
                 self.camera.setHpr(0 if not self._rotation_locked else self._cam_yaw - self._locked_player_yaw, self._cam_pitch, 0)
 
@@ -868,6 +1058,8 @@ class ClientApp(ShowBase):
         if self._k("d"): right   += 1
         if self._k("a"): right   -= 1
 
+        vx = 0.0
+        vy = 0.0
         if forward or right:
             if self._rotation_locked:
                 self._rotation_locked = False
@@ -878,11 +1070,18 @@ class ClientApp(ShowBase):
             rx =  math.cos(yaw_rad)
             ry =  math.sin(yaw_rad)
 
-            vx = (fx * forward + rx * right) * speed * dt
-            vy = (fy * forward + ry * right) * speed * dt
+            vx = (fx * forward + rx * right) * speed
+            vy = (fy * forward + ry * right) * speed
 
             pos = self._player_np.getPos()
-            self._player_np.setPos(pos.x + vx, pos.y + vy, pos.z)
+            self._player_np.setPos(pos.x + vx * dt, pos.y + vy * dt, pos.z)
+
+        # Update local animation
+        if hasattr(self, "local_actor") and self.local_actor:
+            vel_mag = math.sqrt(vx*vx + vy*vy)
+            target_anim = "run" if vel_mag > 0.5 else "idle"
+            if self.local_actor.getCurrentAnim() != target_anim:
+                self.local_actor.loop(target_anim)
 
         if self._k("space") and self._is_grounded:
             self._vel_z = 6.5
