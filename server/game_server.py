@@ -255,7 +255,7 @@ class GameServer:
                 if player_id in self.connections:
                     self.connections[player_id].send({"type": MSG_SCANNER_RESULT, "clues": clues})
             elif mtype == MSG_ATTACK:
-                self._handle_attack(player)
+                self._handle_attack(player, msg.get("target_id"))
             elif mtype == MSG_TAUNT:
                 if player.role == ROLE_HIDER and player.alive and not player.eliminated:
                     now = time.time()
@@ -286,8 +286,8 @@ class GameServer:
         if "position" in msg and isinstance(msg["position"], list) and len(msg["position"]) == 3:
             player.position = [float(v) for v in msg["position"]]
 
-    def _handle_attack(self, hunter):
-        ok, message, eliminated = try_attack(hunter, list(self.players.values()))
+    def _handle_attack(self, hunter, target_id):
+        ok, message, eliminated = try_attack(hunter, list(self.players.values()), target_id=target_id)
         if eliminated:
             self._broadcast({"type": MSG_ELIMINATED, "player_id": eliminated.player_id})
             self.round_mgr.infection_reassign(eliminated)

@@ -12,7 +12,7 @@ from panda3d.core import (
     GeomNode, CardMaker, LineSegs,
     CollisionNode, CollisionBox, CollisionSphere, CollisionCapsule,
     CollisionRay, CollisionSegment, CollisionPlane, Plane,
-    CollisionHandlerPusher, CollisionHandlerQueue, CollisionTraverser,
+    CollisionHandlerPusher, CollisionHandlerFluidPusher, CollisionHandlerQueue, CollisionTraverser,
     LVecBase4f, LPoint3f, LVecBase3f, Vec3, LVector3f,
     WindowProperties,
     Shader,
@@ -41,7 +41,7 @@ from ui.lobby import LobbyScreen
 from ui.hud import HUD
 from ui.results import ResultsScreen
 
-loadPrcFileData("", "window-title Morph Hunt: The Object Among Us")
+loadPrcFileData("", "window-title Morph Hunt")
 loadPrcFileData("", "undecorated 0")
 loadPrcFileData("", "win-size 1280 720")
 loadPrcFileData("", "sync-video 1")
@@ -210,7 +210,7 @@ def _make_prop(parent, model_name, pos, target_scale):
     model.setPos(pos[0], pos[1] + target_scale[1]*0.5, pos[2] - target_scale[2]*0.5)
     return model
 
-def _build_character(parent):
+def _build_character(parent, is_hunter=False):
     try:
         import os
         from panda3d.core import Filename
@@ -234,6 +234,14 @@ def _build_character(parent):
         actor.setPos(0, 0, -0.9) # Align feet with capsule bottom
         # Adjust rotation because Kenney models might face Z or Y
         actor.setH(180) 
+        
+        if is_hunter:
+            hand = actor.exposeJoint(None, "modelRoot", "RightHand")
+            if hand:
+                weapon = _make_box(hand, pos=(0.0, 0.2, 0.0), scale=(0.08, 0.4, 0.15), color_rgb=(40, 40, 40))
+                # Adjust orientation to point forward
+                weapon.setHpr(0, 90, 0)
+
         actor.loop("idle")
         return actor
     except Exception as e:
@@ -260,13 +268,13 @@ class ClientApp(ShowBase):
 
         self.disableMouse()
         props = WindowProperties()
-        props.setTitle("Morph Hunt: The Object Among Us")
+        props.setTitle("Morph Hunt")
         props.setUndecorated(False)
         if hasattr(self.win, "requestProperties"):
             self.win.requestProperties(props)
         self.win.setClearColor(_c4(18, 20, 28))
 
-        self.camLens.setNearFar(0.15, 500.0)
+        self.camLens.setNearFar(0.2, 500.0)
 
         self._shader = _make_shader()
 
@@ -287,7 +295,7 @@ class ClientApp(ShowBase):
 
         self.cTrav = CollisionTraverser()
         self.cTrav.setRespectPrevTransform(True)
-        self._pusher = CollisionHandlerPusher()
+        self._pusher = CollisionHandlerFluidPusher()
         self._pusher.setHorizontal(True)
 
         self.cam_trav = CollisionTraverser("cam_trav")
@@ -299,6 +307,17 @@ class ClientApp(ShowBase):
         cam_node.setIntoCollideMask(BitMask32.allOff())
         self._cam_ray_np = self.render.attachNewNode(cam_node)
         self.cam_trav.addCollider(self._cam_ray_np, self._cam_handler)
+
+        self.shoot_trav = CollisionTraverser("shoot_trav")
+        self._shoot_handler = CollisionHandlerQueue()
+        self._shoot_ray = CollisionRay(0,0,0, 0,1,0)
+        shoot_node = CollisionNode("shoot_ray")
+        shoot_node.addSolid(self._shoot_ray)
+        shoot_node.setFromCollideMask(PLAYER_FROM_MASK | WALL_MASK | FLOOR_MASK)
+        shoot_node.setIntoCollideMask(BitMask32.allOff())
+        self._shoot_ray_np = self.camera.attachNewNode(shoot_node)
+        self.shoot_trav.addCollider(self._shoot_ray_np, self._shoot_handler)
+
         self._floor_handler = CollisionHandlerQueue()
         self._floor_ray_np = None
 
@@ -421,10 +440,32 @@ class ClientApp(ShowBase):
 
     def _fire_blaster(self):
         SoundManager.laser()
-        self._spawn_laser_tracer()
-        self.net.send({"type": MSG_ATTACK})
+        
+        target_id = None
+        hit_pos = None
+        
+        self.shoot_trav.traverse(self.render)
+        if self._shoot_handler.getNumEntries() > 0:
+            self._shoot_handler.sortEntries()
+            for i in range(self._shoot_handler.getNumEntries()):
+                entry = self._shoot_handler.getEntry(i)
+                hit_np = entry.getIntoNodePath()
+                
+                # Check if we hit ourselves (just in case)
+                if hit_np.hasPythonTag("player_id") and hit_np.getPythonTag("player_id") == self.net.player_id:
+                    continue
+                    
+                dist = (entry.getSurfacePoint(self.render) - self.camera.getPos(self.render)).length()
+                if dist <= settings.ATTACK_RANGE:
+                    hit_pos = entry.getSurfacePoint(self.render)
+                    if hit_np.hasPythonTag("player_id"):
+                        target_id = hit_np.getPythonTag("player_id")
+                break
+                
+        self._spawn_laser_tracer(hit_pos)
+        self.net.send({"type": MSG_ATTACK, "target_id": target_id})
 
-    def _spawn_laser_tracer(self):
+    def _spawn_laser_tracer(self, hit_pos=None):
         if self._laser_np:
             self._laser_np.removeNode()
 
@@ -434,7 +475,8 @@ class ClientApp(ShowBase):
 
         p = self.camera.getPos(self.render)
         fwd = self.camera.getQuat(self.render).getForward()
-        end_p = p + fwd * settings.ATTACK_RANGE
+        
+        end_p = hit_pos if hit_pos else (p + fwd * settings.ATTACK_RANGE)
 
         segs.moveTo(p + fwd * 0.4 + Vec3(0.15, -0.1, -0.1))
         segs.drawTo(end_p)
@@ -599,6 +641,8 @@ class ClientApp(ShowBase):
         for g in level_def.get("geometry", []):
             p = g["position"]
             s = g["scale"]
+            rot = g.get("rotation", (0, 0, 0))
+            is_visible = g.get("visible", True)
             
             is_floor = g.get("type") == "floor"
             is_prop = g.get("type") == "prop"
@@ -619,8 +663,9 @@ class ClientApp(ShowBase):
                     shader=self._shader,
                 )
 
-            is_floor = g.get("type") == "floor"
-            is_solid = g.get("solid", True)
+            np.setHpr(rot)
+            if not is_visible:
+                np.hide()
 
             if is_solid and not is_floor:
                 col_node = CollisionNode("wall_col")
@@ -774,7 +819,7 @@ class ClientApp(ShowBase):
                             shader=self._shader,
                         )
             elif self.my_role == ROLE_HUNTER or self.my_role == ROLE_HIDER:
-                self.local_actor = _build_character(self._player_visual)
+                self.local_actor = _build_character(self._player_visual, self.my_role == ROLE_HUNTER)
                 if not self.local_actor:
                     _make_box(
                         self._player_visual,
@@ -952,12 +997,30 @@ class ClientApp(ShowBase):
                         prop_np = _make_prop(np, PROP_MODEL_MAP[current_state[1]], (0,0,0), obj.scale)
                     if not prop_np:
                         _make_box(np, pos=(0, 0, 0), scale=obj.scale, color_rgb=obj.color, shader=self._shader)
+                    
+                    # Add hitbox for prop
+                    col = CollisionNode(f"hitbox_{pid}")
+                    hx, hy, hz = max(0.1, obj.scale[0]*0.5), max(0.1, obj.scale[1]*0.5), max(0.1, obj.scale[2]*0.5)
+                    col.addSolid(CollisionBox(LPoint3f(0, 0, hz), hx, hy, hz))
+                    col.setIntoCollideMask(PLAYER_FROM_MASK)
+                    col.setFromCollideMask(BitMask32.allOff())
+                    np.attachNewNode(col)
+                    np.setPythonTag("player_id", pid)
             else:
-                actor = _build_character(np)
+                actor = _build_character(np, role == ROLE_HUNTER)
                 if actor:
                     self.remote_actors[pid] = actor
                 else:
                     _make_box(np, pos=(0, 0, 0), scale=(0.6, 0.6, 1.8), color_rgb=(210, 70, 70) if role == ROLE_HUNTER else (70, 200, 90), shader=self._shader)
+                
+                # Add hitbox for human
+                if role == ROLE_HIDER:
+                    col = CollisionNode(f"hitbox_{pid}")
+                    col.addSolid(CollisionCapsule(0, 0, 0.5, 0, 0, 1.8, 0.4))
+                    col.setIntoCollideMask(PLAYER_FROM_MASK)
+                    col.setFromCollideMask(BitMask32.allOff())
+                    np.attachNewNode(col)
+                    np.setPythonTag("player_id", pid)
             
             self.remote_nodes[pid] = np
 
@@ -1011,10 +1074,19 @@ class ClientApp(ShowBase):
                 self._player_np.setH(self._locked_player_yaw)
 
             if self._third_person:
+                if self._player_visual:
+                    self._player_visual.show()
                 rad_yaw = math.radians(self._cam_yaw)
                 max_cam_dist = 4.0
-                
-                head_pos = self._player_np.getPos(self.render) + LVector3f(0, 0, 1.2)
+                cam_z_offset = 1.2
+
+                if self.my_transformed:
+                    obj = REGISTRY.get(self.my_transformed)
+                    if obj:
+                        cam_z_offset = max(0.5, obj.scale[1] * 1.5)
+                        max_cam_dist = max(3.0, obj.scale[1] * 3.0)
+
+                head_pos = self._player_np.getPos(self.render) + LVector3f(0, 0, cam_z_offset)
                 target_x = math.sin(rad_yaw) * max_cam_dist
                 target_y = -math.cos(rad_yaw) * max_cam_dist
                 target_pos = head_pos + LVector3f(target_x, target_y, 0)
@@ -1039,6 +1111,8 @@ class ClientApp(ShowBase):
                 self.camera.setPos(head_pos.x + cam_x, head_pos.y + cam_y, head_pos.z)
                 self.camera.setHpr(self._cam_yaw, self._cam_pitch, 0)
             else:
+                if self._player_visual:
+                    self._player_visual.hide()
                 self.camera.reparentTo(self._player_np)
                 self.camera.setPos(0, 0, 0.6)
                 self.camera.setHpr(0 if not self._rotation_locked else self._cam_yaw - self._locked_player_yaw, self._cam_pitch, 0)

@@ -5,19 +5,19 @@ Maps are described purely as data (lists of dicts) so both the server
 and client build identical layouts, visuals, and collisions.
 """
 
-def floor(position, size, color=(90, 90, 95)):
+def floor(position, size, color=(90, 90, 95), rotation=(0,0,0)):
     """size = (width, depth). Floor height is fixed at y=0, thickness 0.2."""
-    return {"type": "floor", "position": (position[0], 0, position[1]), "scale": (size[0], 0.2, size[1]), "color": color, "solid": True}
+    return {"type": "floor", "position": (position[0], 0, position[1]), "scale": (size[0], 0.2, size[1]), "color": color, "solid": True, "rotation": rotation}
 
 
-def wall(position, size, color=(120, 120, 130)):
+def wall(position, size, color=(120, 120, 130), rotation=(0,0,0), visible=True, solid=True):
     """size = (width, height, thickness)"""
-    return {"type": "wall", "position": position, "scale": size, "color": color, "solid": True}
+    return {"type": "wall", "position": position, "scale": size, "color": color, "solid": solid, "visible": visible, "rotation": rotation}
 
 
-def prop(kind, position, color=(150, 130, 100), scale=(1, 1, 1), solid=True):
+def prop(kind, position, color=(150, 130, 100), scale=(1, 1, 1), solid=True, rotation=(0,0,0)):
     """A static (non-hideable) decorative structure prop."""
-    return {"type": "prop", "kind": kind, "position": position, "scale": scale, "color": color, "solid": solid}
+    return {"type": "prop", "kind": kind, "position": position, "scale": scale, "color": color, "solid": solid, "rotation": rotation}
 
 
 def hider_object(key, position):

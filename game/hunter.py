@@ -84,10 +84,11 @@ def scanner_regen_tick(hunter, now=None):
         hunter.last_scanner_charge_time = now
 
 
-def try_attack(hunter, all_players, now=None):
+def try_attack(hunter, all_players, now=None, target_id=None):
     """
     Resolve a Hunter's attack: hits the nearest alive Hider within range/
-    cone in front of the hunter. Returns (ok, message, eliminated_player_or_None).
+    cone in front of the hunter, OR the explicitly hit target_id. 
+    Returns (ok, message, eliminated_player_or_None).
     """
     now = now or time.time()
     if hunter.role != "hunter":
@@ -98,21 +99,30 @@ def try_attack(hunter, all_players, now=None):
     hunter.last_attack_time = now
 
     best_target = None
-    best_dist = settings.ATTACK_RANGE
-    for p in all_players:
-        if p.role != "hider" or not p.alive:
-            continue
-        dist = _distance(hunter.position, p.position)
-        if dist <= best_dist:
-            # simple forward-facing check using rotation_y and vector to target
-            dx = p.position[0] - hunter.position[0]
-            dz = p.position[2] - hunter.position[2]
-            angle_to_target = math.degrees(math.atan2(dx, dz))
-            facing = hunter.rotation_y % 360
-            diff = abs((angle_to_target - facing + 180) % 360 - 180)
-            if diff <= 60:  # ~120 degree attack cone
-                best_target = p
-                best_dist = dist
+    
+    if target_id is not None:
+        for p in all_players:
+            if p.player_id == target_id and p.role == "hider" and p.alive:
+                dist = _distance(hunter.position, p.position)
+                if dist <= settings.ATTACK_RANGE * 1.5:  # Tolerance for lag
+                    best_target = p
+                break
+    else:
+        # Fallback to cone check if no target_id provided
+        best_dist = settings.ATTACK_RANGE
+        for p in all_players:
+            if p.role != "hider" or not p.alive:
+                continue
+            dist = _distance(hunter.position, p.position)
+            if dist <= best_dist:
+                dx = p.position[0] - hunter.position[0]
+                dz = p.position[2] - hunter.position[2]
+                angle_to_target = math.degrees(math.atan2(dx, dz))
+                facing = hunter.rotation_y % 360
+                diff = abs((angle_to_target - facing + 180) % 360 - 180)
+                if diff <= 60:  # ~120 degree attack cone
+                    best_target = p
+                    best_dist = dist
 
     if not best_target:
         return True, "Attack missed.", None
