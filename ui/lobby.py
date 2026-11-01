@@ -45,35 +45,41 @@ def _btn(parent, text, pos, command, fg, hover_fg=None, scale=0.060, width=3.8):
         command=command,
     )
     def on_enter(event):
-        btn["text_fg"] = hfg
-        btn.setScale(scale * 1.15)
+        if not btn.isEmpty():
+            btn["text_fg"] = hfg
+            btn.setScale(scale * 1.15)
     def on_exit(event):
-        btn["text_fg"] = fg
-        btn.setScale(scale)
+        if not btn.isEmpty():
+            btn["text_fg"] = fg
+            btn.setScale(scale)
     btn.bind(ENTER, on_enter)
     btn.bind(EXIT, on_exit)
     return btn
 
 
 class LobbyScreen:
-    def __init__(self, on_ready_toggle, on_set_map, on_set_mode, on_start, on_leave, on_add_bot=None):
+    def __init__(self, on_ready_toggle, on_set_map, on_set_mode, on_start, on_leave, on_add_bot=None, on_chat_send=None):
         self.on_ready_toggle = on_ready_toggle
         self.on_set_map      = on_set_map
         self.on_set_mode     = on_set_mode
         self.on_start        = on_start
         self.on_leave        = on_leave
         self.on_add_bot      = on_add_bot
+        self.on_chat_send    = on_chat_send
 
         self._mode_idx = 0
+        self._map_idx = 0
         self.is_host   = False
         self._my_ready = False
         self._player_count = 0
         self._host_ready = False
+        self.chat_history = []
+        self._player_buttons = []
 
         self.root = builtins.base.aspect2d.attachNewNode("lobby_root")
 
         self._bg_img = None
-        bg_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "lobby_bg.jpg")
+        bg_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "new_assets","background","lobby_bg.jpg")
         if os.path.exists(bg_path):
             try:
                 tex = builtins.base.loader.loadTexture(Filename.fromOsSpecific(bg_path))
@@ -105,10 +111,10 @@ class LobbyScreen:
 
         player_panel = DirectFrame(
             parent=self.root,
-            relief=None,
-            frameSize=(-1.65, -0.05, -0.40, 0.72),
+            frameColor=_c(10, 12, 20, 0.65),
+            frameSize=(-1.65, 0.10, -0.98, 0.75),
             pos=(0, 0, 0),
-            sortOrder=1,
+            sortOrder=0,
         )
 
         _label(self.root, "PLAYERS",
@@ -120,75 +126,125 @@ class LobbyScreen:
             pos=(-0.10, 0, 0.68), scale=0.048,
             fg=_c(160, 170, 175), align=TextNode.ARight, shadow=(0,0,0,0.8))
 
-        self._player_label = _label(
-            self.root, "Waiting for players...",
-            pos=(-1.58, 0, 0.58), scale=0.048,
-            fg=_c(210, 215, 218), shadow=(0,0,0,0.8))
-
         info_panel = DirectFrame(
             parent=self.root,
-            frameColor=(0, 0, 0, 0),
-            frameSize=(0.10, 1.65, -0.25, 0.72),
+            frameColor=_c(10, 12, 20, 0.65),
+            frameSize=(0.10, 1.50, -0.90, 0.75),
             pos=(0, 0, 0),
-            sortOrder=1,
+            sortOrder=0,
         )
 
-        _label(self.root, "MAP",
-               pos=(0.15, 0, 0.68), scale=0.050,
-               fg=_c(80, 225, 240))
-        self._map_label = _label(
-            self.root, "House",
-            pos=(0.15, 0, 0.56), scale=0.055,
-            fg=_c(220, 225, 228))
+        _label(self.root, "MAP", pos=(0.60, 0, 0.40), scale=0.050, fg=_c(80, 225, 240), align=TextNode.ACenter)
+        self._map_label = _label(self.root, "House", pos=(0.60, 0, 0.28), scale=0.055, fg=_c(220, 225, 228), align=TextNode.ACenter)
+        self._map_left = _btn(self.root, "<", (0.30, 0, 0.28), self._prev_map, _c(200, 215, 220), scale=0.06, width=1.0)
+        self._map_right = _btn(self.root, ">", (0.90, 0, 0.28), self._next_map, _c(200, 215, 220), scale=0.06, width=1.0)
 
-        _label(self.root, "Large residential property with basement and terrace",
-               pos=(0.15, 0, 0.46), scale=0.036,
-               fg=_c(180, 190, 195), shadow=(0,0,0,0.8))
+        _label(self.root, "MODE", pos=(0.60, 0, 0.05), scale=0.050, fg=_c(80, 225, 240), align=TextNode.ACenter)
+        self._mode_label = _label(self.root, "Classic", pos=(0.60, 0, -0.07), scale=0.055, fg=_c(220, 225, 228), align=TextNode.ACenter)
+        self._mode_left = _btn(self.root, "<", (0.30, 0, -0.07), self._prev_mode, _c(200, 215, 220), scale=0.06, width=1.0)
+        self._mode_right = _btn(self.root, ">", (0.90, 0, -0.07), self._next_mode, _c(200, 215, 220), scale=0.06, width=1.0)
 
-        _label(self.root, "MODE",
-               pos=(0.15, 0, 0.32), scale=0.050,
-               fg=_c(80, 225, 240))
-        self._mode_label = _label(
-            self.root, "Classic",
-            pos=(0.15, 0, 0.20), scale=0.055,
-            fg=_c(220, 225, 228))
-
-        self._mode_desc = _label(
-            self.root, "Hiders survive the timer to win",
-            pos=(0.15, 0, 0.10), scale=0.036,
-            fg=_c(180, 190, 195), shadow=(0,0,0,0.8))
-
-        _btn(self.root, "CYCLE MODE", (1.05, 0, -0.02), self._cycle_mode,
-             _c(200, 215, 220), _c(80, 240, 230), scale=0.050, width=3.0)
+        self._mode_desc = _label(self.root, "Hiders survive the timer to win", pos=(0.60, 0, -0.17), scale=0.036, fg=_c(180, 190, 195), align=TextNode.ACenter, shadow=(0,0,0,0.8))
 
         if on_add_bot:
             self._add_bot_btn = _btn(
-                self.root, "+ ADD BOT", (1.05, 0, -0.20), self._add_bot,
+                self.root, "+ ADD BOT", (0.60, 0, -0.30), self._add_bot,
                 _c(240, 180, 75), _c(255, 215, 95), scale=0.050, width=3.0)
+
+        # Chat System
+        _label(self.root, "MESSAGE", pos=(-1.60, 0, -0.35), scale=0.045, fg=_c(80, 225, 240))
+        chat_bg = DirectFrame(parent=self.root, frameColor=_c(10, 12, 20, 0.8), frameSize=(-1.65, 0.1, -0.85, -0.40), pos=(0,0,0), sortOrder=0)
+        self._chat_label = _label(self.root, "", pos=(-1.60, 0, -0.45), scale=0.035, fg=_c(200, 200, 200), align=TextNode.ALeft)
+        
+        from direct.gui.DirectEntry import DirectEntry
+        
+        def clear_placeholder():
+            if self._chat_entry.get() == "type your message here...":
+                self._chat_entry.enterText("")
+        
+        def set_placeholder():
+            if not self._chat_entry.get():
+                self._chat_entry.enterText("type your message here...")
+        
+        self._chat_entry = DirectEntry(parent=self.root, initialText="type your message here...", scale=0.04, pos=(-1.60, 0, -0.92), width=35, frameColor=_c(30, 30, 40), text_fg=_c(255,255,255), command=self._send_chat, focusInCommand=clear_placeholder, focusOutCommand=set_placeholder)
+        _btn(self.root, "SEND", (-0.15, 0, -0.91), self._click_send_chat, _c(80, 240, 230), scale=0.035)
 
         self._status_label = _label(
             self.root, "",
-            pos=(0, 0, -0.52), scale=0.052,
+            pos=(0.60, 0, -0.55), scale=0.052,
             fg=_c(255, 180, 80), align=TextNode.ACenter, shadow=(0,0,0,0.8))
 
         self._ready_btn = _btn(
-            self.root, "READY", (-0.80, 0, -0.76), self._toggle_ready,
+            self.root, "READY", (0.60, 0, -0.68), self._toggle_ready,
             _c(110, 225, 155), _c(140, 255, 180), width=3.2)
 
         self._start_btn = _btn(
-            self.root, "START GAME", (0.0, 0, -0.76), self._start,
+            self.root, "START GAME", (0.60, 0, -0.82), self._start,
             _c(240, 210, 120), _c(255, 235, 160), scale=0.070, width=4.5)
 
-        _btn(self.root, "LEAVE", (0.85, 0, -0.76), self.on_leave,
+        _btn(self.root, "LEAVE LOBBY", (1.20, 0, 0.85), self.on_leave,
              _c(225, 155, 155), _c(255, 185, 185), width=3.2)
 
     def _add_bot(self):
         if self.is_host and self.on_add_bot:
             self.on_add_bot()
 
-    def _cycle_mode(self):
-        self._mode_idx = (self._mode_idx + 1) % len(settings.GAME_MODES)
-        self.on_set_mode(settings.GAME_MODES[self._mode_idx])
+    def _prev_mode(self):
+        next_idx = (self._mode_idx - 1) % len(settings.GAME_MODES)
+        mode = settings.GAME_MODES[next_idx]
+        req = settings.MODE_UNLOCK_LEVELS.get(mode, 1)
+        if getattr(self, "_host_level", 1) >= req:
+            self.on_set_mode(mode)
+        else:
+            self._show_notification(f"Reach level {req} to unlock {mode.replace('_', ' ').title()}")
+
+    def _next_mode(self):
+        next_idx = (self._mode_idx + 1) % len(settings.GAME_MODES)
+        mode = settings.GAME_MODES[next_idx]
+        req = settings.MODE_UNLOCK_LEVELS.get(mode, 1)
+        if getattr(self, "_host_level", 1) >= req:
+            self.on_set_mode(mode)
+        else:
+            self._show_notification(f"Reach level {req} to unlock {mode.replace('_', ' ').title()}")
+
+    def _show_notification(self, text):
+        if not hasattr(self, "_notif_label"):
+            self._notif_label = _label(self.root, "", pos=(0.60, 0, -0.45), scale=0.045, fg=_c(255, 100, 100), align=TextNode.ACenter, shadow=(0,0,0,0.8))
+        self._notif_label["text"] = text
+        import builtins
+        builtins.base.taskMgr.remove("clear_lobby_notif")
+        builtins.base.taskMgr.doMethodLater(3.0, self._clear_notification, "clear_lobby_notif")
+        
+    def _clear_notification(self, task):
+        if hasattr(self, "_notif_label"):
+            self._notif_label["text"] = ""
+        return task.done
+
+    def _prev_map(self):
+        self._map_idx = (self._map_idx - 1) % len(settings.LEVELS)
+        self.on_set_map(settings.LEVELS[self._map_idx])
+
+    def _next_map(self):
+        self._map_idx = (self._map_idx + 1) % len(settings.LEVELS)
+        self.on_set_map(settings.LEVELS[self._map_idx])
+
+    def _send_chat(self, text):
+        if text.strip() and text != "type your message here...":
+            # We need client.py to handle chat. We'll emit an event or access net directly
+            builtins.base.net.send({"type": "chat", "text": text.strip()})
+        self._chat_entry.enterText("")
+        self._chat_entry['focus'] = 0
+        if not self._chat_entry.get():
+            self._chat_entry.enterText("type your message here...")
+        
+    def _click_send_chat(self):
+        self._send_chat(self._chat_entry.get())
+        
+    def add_chat_message(self, name, text):
+        self.chat_history.append(f"{name}: {text}")
+        if len(self.chat_history) > 10:
+            self.chat_history.pop(0)
+        self._chat_label["text"] = "\n".join(self.chat_history)
 
     def _toggle_ready(self):
         self._my_ready = not self._my_ready
@@ -199,43 +255,56 @@ class LobbyScreen:
             self.on_start()
 
     def update_state(self, players, map_key, mode, host_id, my_id):
-        lines = []
         self._player_count = len(players)
         self._host_ready = False
+        
+        for b in self._player_buttons: b.removeNode()
+        self._player_buttons.clear()
 
+        y = 0.58
         for p in players:
             pid = p.get("player_id")
             name = p.get("name", "???")
 
             tags = []
-            if pid == host_id:
-                tags.append("HOST")
-            if pid == my_id:
-                tags.append("YOU")
-
+            if pid == host_id: tags.append("HOST")
+            if pid == my_id: tags.append("YOU")
             tag_str = f" [{', '.join(tags)}]" if tags else ""
 
             ready = p.get("ready", False)
             ready_str = "[OK] READY" if ready else "[X] NOT READY"
 
-            if pid == host_id and ready:
-                self._host_ready = True
-
-            lines.append(f"  {name}{tag_str}  -  {ready_str}")
-
-        self._player_label["text"] = (
-            "\n".join(lines) if lines else "Waiting for players..."
-        )
+            if pid == host_id and ready: self._host_ready = True
+            if pid == host_id: self._host_level = p.get("level", 1)
+            
+            level = p.get("level", 1)
+            lbl = _label(self.root, f"[Lv {level}]  {name}{tag_str}  -  {ready_str}", pos=(-1.58, 0, y), scale=0.048, fg=_c(210, 215, 218), shadow=(0,0,0,0.8))
+            self._player_buttons.append(lbl)
+            
+            if self.is_host and pid != my_id:
+                # Add Kick button
+                def make_kick(kpid): return lambda: builtins.base.net.send({"type": "kick", "target_id": kpid})
+                btn = _btn(self.root, "KICK", (-0.2, 0, y), make_kick(pid), _c(225, 100, 100), scale=0.035, width=2.0)
+                self._player_buttons.append(btn)
+                
+            y -= 0.08
 
         self._player_count_label["text"] = f"{self._player_count} / {settings.MAX_PLAYERS}"
 
         self._map_label["text"] = map_key.replace("_", " ").title()
         self._mode_label["text"] = mode.replace("_", " ").title()
+        
+        # Keep track of current index so next/prev work correctly
+        if mode in settings.GAME_MODES:
+            self._mode_idx = settings.GAME_MODES.index(mode)
+        if map_key in settings.LEVELS:
+            self._map_idx = settings.LEVELS.index(map_key)
 
         mode_descs = {
             "classic": "Hiders survive the timer to win",
             "object_rush": "Complete objectives before time runs out",
             "infection": "Eliminated hiders become hunters",
+            "clash_squad": "4v4 Competitive Team Deathmatch",
         }
         self._mode_desc["text"] = mode_descs.get(mode, "")
 
@@ -244,11 +313,17 @@ class LobbyScreen:
         status = ""
         can_start = True
 
+        all_ready = True
+        for p in players:
+            if not p.get("ready", False):
+                all_ready = False
+                break
+
         if self._player_count < settings.MIN_PLAYERS_TO_START:
             status = f"Need at least {settings.MIN_PLAYERS_TO_START} players"
             can_start = False
-        elif self.is_host and not self._host_ready:
-            status = "Host must be ready"
+        elif self.is_host and not all_ready:
+            status = "All players must be ready"
             can_start = False
         elif self.is_host:
             status = "Ready to start!"
@@ -257,18 +332,29 @@ class LobbyScreen:
 
         self._status_label["text"] = status
 
-        if self.is_host and can_start:
-            self._start_btn["text_fg"] = _c(240, 210, 120)
-            self._start_btn["text0_fg"] = _c(240, 210, 120)
-            self._start_btn["state"] = 1
-        elif self.is_host:
-            self._start_btn["text_fg"] = _c(100, 100, 100)
-            self._start_btn["text0_fg"] = _c(100, 100, 100)
-            self._start_btn["state"] = 0
+        if self.is_host:
+            self._start_btn.show()
+            self._ready_btn.show()
+            self._map_left.show()
+            self._map_right.show()
+            self._mode_left.show()
+            self._mode_right.show()
+            if hasattr(self, "_add_bot_btn"): self._add_bot_btn.show()
+            
+            if can_start:
+                self._start_btn["text_fg"] = _c(240, 210, 120)
+                self._start_btn["state"] = 1
+            else:
+                self._start_btn["text_fg"] = _c(100, 100, 100)
+                self._start_btn["state"] = 0
         else:
-            self._start_btn["text_fg"] = _c(70, 70, 70)
-            self._start_btn["text0_fg"] = _c(70, 70, 70)
-            self._start_btn["state"] = 0
+            self._start_btn.hide()
+            self._ready_btn.show()
+            self._map_left.hide()
+            self._map_right.hide()
+            self._mode_left.hide()
+            self._mode_right.hide()
+            if hasattr(self, "_add_bot_btn"): self._add_bot_btn.hide()
 
         if self._my_ready:
             self._ready_btn["text"] = "UNREADY"

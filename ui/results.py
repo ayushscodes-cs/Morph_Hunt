@@ -78,14 +78,24 @@ class ResultsScreen:
         self._winner["text"] = f"{winner} WIN!"
         self._reason["text"] = result.get("reason", "")
 
-        rows = ["NAME            ROLE      SURVIVED  ELIMS  OBJ   XP"]
+        for child in self._table.getChildren():
+            child.removeNode()
+
+        headers = [("NAME", 0.0), ("ROLE", 8.0), ("SURVIVED", 14.0), ("ELIMS", 20.0), ("OBJ", 25.0), ("XP", 30.0)]
+        y = 0
+        for title, x in headers:
+            _label(self._table, title, pos=(x, 0, y), scale=0.9, fg=_c(210, 215, 220), align=TextNode.ALeft)
+        
+        y -= 1.2
         for p in result.get("players", []):
-            rows.append(
-                f"{p['name'][:14]:<15} {p['role']:<9} "
-                f"{'yes' if p['survived'] else 'no':<9}"
-                f"{p['eliminations']:<7}{p['objectives_completed']:<6}{p['xp']}"
-            )
-        self._table["text"] = "\n".join(rows)
+            _label(self._table, p['name'][:14], pos=(headers[0][1], 0, y), scale=0.8, fg=_c(210, 215, 220), align=TextNode.ALeft)
+            _label(self._table, p['role'], pos=(headers[1][1], 0, y), scale=0.8, fg=_c(210, 215, 220), align=TextNode.ALeft)
+            _label(self._table, 'yes' if p['survived'] else 'no', pos=(headers[2][1], 0, y), scale=0.8, fg=_c(210, 215, 220), align=TextNode.ALeft)
+            _label(self._table, str(p['eliminations']), pos=(headers[3][1], 0, y), scale=0.8, fg=_c(210, 215, 220), align=TextNode.ALeft)
+            _label(self._table, str(p['objectives_completed']), pos=(headers[4][1], 0, y), scale=0.8, fg=_c(210, 215, 220), align=TextNode.ALeft)
+            _label(self._table, str(p['xp']), pos=(headers[5][1], 0, y), scale=0.8, fg=_c(210, 215, 220), align=TextNode.ALeft)
+            y -= 1.0
+            
         self.show()
 
     def show(self):  self.root.show()

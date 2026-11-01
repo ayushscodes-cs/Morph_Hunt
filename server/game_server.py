@@ -37,6 +37,7 @@ from game.hunter import try_scanner, try_attack, scanner_regen_tick
 from game.hider import eliminate_hider
 from game.level_manager import load_level
 from game.stats_db import StatsDB
+from game.progression import is_mode_unlocked
 from game.ai_bot import AIBot, BOT_NAMES
 from game.game_state import MSG_ADD_BOT, MSG_TAUNT, MSG_TAUNT_BROADCAST
 
@@ -78,10 +79,21 @@ class GameServer:
 
         self.msg_queue: "queue.Queue[tuple[int, dict]]" = queue.Queue()
         self._running = False
-        self._interact_state: dict[int, str] = {}
         self.stats_db = StatsDB()
 
     # ------------------------------------------------------------------
+    def _lan_broadcast_loop(self):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        while self._running:
+            try:
+                msg = b"MORPH_HUNT_SERVER"
+                sock.sendto(msg, ('<broadcast>', 5556))
+                sock.sendto(msg, ('127.255.255.255', 5556))
+            except Exception:
+                pass
+            time.sleep(2)
+
     def start(self):
         self.listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -91,6 +103,7 @@ class GameServer:
         print(f"[server] listening on {self.host}:{self.port}")
 
         threading.Thread(target=self._accept_loop, daemon=True).start()
+        threading.Thread(target=self._lan_broadcast_loop, daemon=True).start()
         self._game_loop()
 
     def stop(self):
@@ -148,7 +161,6 @@ class GameServer:
                 except OSError:
                     pass
             self.players.pop(player_id, None)
-            self._interact_state.pop(player_id, None)
             if self.host_player_id == player_id:
                 remaining = list(self.connections.keys())
                 self.host_player_id = remaining[0] if remaining else None
@@ -210,8 +222,16 @@ class GameServer:
         with self._lock:
             if mtype == MSG_JOIN:
                 name = str(msg.get("name", f"Player{player_id}"))[:20]
+                profile_id = msg.get("profile_id", str(player_id))
                 is_host = player_id == self.host_player_id
-                self.players[player_id] = PlayerState(player_id, name, is_host)
+                player = PlayerState(player_id, name, is_host, profile_id)
+                player.char_idx = int(msg.get("char_idx", 1))
+                
+                stats = self.stats_db.get_stats(profile_id)
+                if stats:
+                    player.xp = stats.get("total_xp", 0)
+
+                self.players[player_id] = player
                 self._broadcast_lobby_state()
                 return
 
@@ -221,20 +241,32 @@ class GameServer:
 
             if mtype == MSG_SET_READY:
                 player.ready = bool(msg.get("ready", False))
+                if "char_idx" in msg:
+                    player.char_idx = int(msg["char_idx"])
                 self._broadcast_lobby_state()
             elif mtype == MSG_SET_MAP and player_id == self.host_player_id:
                 if msg.get("map") in settings.LEVELS:
                     self.round_mgr.map_key = msg["map"]
                     self._broadcast_lobby_state()
             elif mtype == MSG_SET_MODE and player_id == self.host_player_id:
-                if msg.get("mode") in settings.GAME_MODES:
-                    self.round_mgr.mode = msg["mode"]
-                    self._broadcast_lobby_state()
+                requested_mode = msg.get("mode")
+                if requested_mode in settings.GAME_MODES:
+                    if is_mode_unlocked(requested_mode, player.level):
+                        self.round_mgr.mode = requested_mode
+                        self._broadcast_lobby_state()
+                    else:
+                        if player_id in self.connections:
+                            self.connections[player_id].send({"type": MSG_ERROR, "message": f"Requires Level {settings.MODE_UNLOCK_LEVELS.get(requested_mode, 1)}"})
             elif mtype == MSG_ADD_BOT and player_id == self.host_player_id:
+                if len(self.players) >= settings.MAX_PLAYERS:
+                    if player_id in self.connections:
+                        self.connections[player_id].send({"type": MSG_ERROR, "message": "Lobby is full!"})
+                    return
                 bot_id = self._next_id
                 self._next_id += 1
                 bot_name = BOT_NAMES[len(self.bots) % len(BOT_NAMES)]
                 bot_player = PlayerState(player_id=bot_id, name=bot_name)
+                bot_player.char_idx = __import__('random').randint(1, 10)
                 bot_player.ready = True
                 self.players[bot_id] = bot_player
                 self.bots[bot_id] = AIBot(bot_player)
@@ -255,13 +287,21 @@ class GameServer:
                 if player_id in self.connections:
                     self.connections[player_id].send({"type": MSG_SCANNER_RESULT, "clues": clues})
             elif mtype == MSG_ATTACK:
-                self._handle_attack(player, msg.get("target_id"))
+                self._handle_attack(player, msg.get("target_id"), msg.get("weapon", 1))
             elif mtype == MSG_TAUNT:
                 if player.role == ROLE_HIDER and player.alive and not player.eliminated:
                     now = time.time()
-                    if (now - getattr(player, "last_taunt_time", 0)) >= settings.TAUNT_COOLDOWN:
+                    if now - getattr(player, "last_taunt_time", 0) > settings.TAUNT_COOLDOWN:
                         player.last_taunt_time = now
                         player.xp += settings.TAUNT_BONUS_XP
+                        
+                        completed = self.objective_mgr.handle_event(player, "taunt")
+                        for p, task in completed:
+                            p.objectives_completed += 1
+                            p.xp += settings.XP_PER_OBJECTIVE
+                            if self.round_mgr.mode == "object_rush":
+                                self.round_mgr.phase_duration = max(0, self.round_mgr.phase_duration - 30)
+                        
                         self._broadcast({
                             "type": MSG_TAUNT_BROADCAST,
                             "name": player.name,
@@ -272,6 +312,15 @@ class GameServer:
             elif mtype == MSG_CHAT:
                 text = str(msg.get("text", ""))[:200]
                 self._broadcast({"type": MSG_CHAT_BROADCAST, "name": player.name, "text": text})
+            elif mtype == "kick":
+                if player_id == self.host_player_id:
+                    target_id = msg.get("target_id")
+                    if target_id in self.connections:
+                        try:
+                            self.connections[target_id].send({"type": MSG_ERROR, "message": "You were kicked."})
+                        except Exception:
+                            pass
+                    self._handle_disconnect(target_id)
             elif mtype == MSG_LEAVE:
                 pass  # disconnect handled by socket closing
 
@@ -281,24 +330,27 @@ class GameServer:
             player.move_input = [float(move[0]), float(move[1])]
         player.rotation_y = float(msg.get("look_y", player.rotation_y))
         player.sprint = bool(msg.get("sprint", False))
+        player.crouch = bool(msg.get("crouch", False))
         if msg.get("jump"):
             player.jump_requested = True
+            completed = self.objective_mgr.handle_event(player, "jump")
+            for p, task in completed:
+                p.objectives_completed += 1
+                p.xp += settings.XP_PER_OBJECTIVE
+                if self.round_mgr.mode == "object_rush":
+                    self.round_mgr.phase_duration = max(0, self.round_mgr.phase_duration - 30)
+
         if "position" in msg and isinstance(msg["position"], list) and len(msg["position"]) == 3:
             player.position = [float(v) for v in msg["position"]]
 
-    def _handle_attack(self, hunter, target_id):
-        ok, message, eliminated = try_attack(hunter, list(self.players.values()), target_id=target_id)
+    def _handle_attack(self, hunter, target_id, weapon=1):
+        ok, message, eliminated = try_attack(hunter, list(self.players.values()), target_id=target_id, weapon=weapon)
         if eliminated:
             self._broadcast({"type": MSG_ELIMINATED, "player_id": eliminated.player_id})
             self.round_mgr.infection_reassign(eliminated)
 
     def _handle_interact(self, player):
-        if player.role != ROLE_HIDER or not player.alive:
-            return
-        nearby = self.objective_mgr.find_nearby(player.position)
-        self._interact_state[player.player_id] = nearby.obj_id if nearby else None
-
-    # ------------------------------------------------------------------
+        pass    # ------------------------------------------------------------------
     def _try_start_round(self):
         host_conn = self.connections.get(self.host_player_id)
         host_player = self.players.get(self.host_player_id)
@@ -306,6 +358,12 @@ class GameServer:
         if not host_player or not host_player.ready:
             if host_conn:
                 host_conn.send({"type": MSG_ERROR, "message": "Host must be ready"})
+            return
+
+        all_ready = all(p.ready for p in self.players.values())
+        if not all_ready:
+            if host_conn:
+                host_conn.send({"type": MSG_ERROR, "message": "All players must be ready"})
             return
 
         total_players = len(self.players)
@@ -320,9 +378,10 @@ class GameServer:
             return
 
         self.level_def = load_level(self.round_mgr.map_key)
-        self.objective_mgr.load_for_level(self.level_def)
-        self.objective_mgr.reset()
         self.round_mgr.assign_roles(list(self.players.values()))
+        if self.round_mgr.mode == "object_rush":
+            self.objective_mgr.assign_tasks(list(self.players.values()))
+
         self._place_spawns()
 
         for bot in self.bots.values():
@@ -376,17 +435,20 @@ class GameServer:
             self._broadcast({"type": MSG_PHASE_CHANGE, "phase": PHASE_HUNTING, "time_left": settings.HUNTING_PHASE_SECONDS})
 
         elif phase == PHASE_HUNTING:
-            completed = self.objective_mgr.tick(dt, dict(self._interact_state))
-            for obj in completed:
-                pid = obj.active_player_id
-                if pid in self.players:
-                    self.players[pid].objectives_completed += 1
-                    self.players[pid].xp += settings.XP_PER_OBJECTIVE
+            completed = self.objective_mgr.tick(dt, list(self.players.values()))
+            
+            for player, task in completed:
+                player.objectives_completed += 1
+                player.xp += settings.XP_PER_OBJECTIVE
+                
+                # Deduct 30 seconds for every task completed
+                if self.round_mgr.mode == "object_rush":
+                    self.round_mgr.phase_duration = max(0, self.round_mgr.phase_duration - 30)
+
             if completed:
                 self._broadcast({
-
                     "type": MSG_OBJECTIVE_UPDATE,
-                    "objectives": [o.to_dict() for o in self.objective_mgr.objectives],
+                    "#trigger_sync": True # Tell client to just rely on snapshot
                 })
 
             result = self.round_mgr.check_win_condition(list(self.players.values()), self.objective_mgr)
@@ -408,13 +470,12 @@ class GameServer:
         for p in result.get("players", []):
             won = (winner == "hiders" and p["role"] == ROLE_HIDER) or (winner == "hunters" and p["role"] == ROLE_HUNTER)
             self.stats_db.record_round(
-                p["name"], p["xp"], won, p["eliminations"], p["objectives_completed"],
+                p.get("profile_id", p["name"]), p["name"], p["xp"], won, p["eliminations"], p["objectives_completed"],
             )
 
     def _broadcast_snapshot(self):
         with self._lock:
             players_payload = [p.to_public_dict(None) for p in self.players.values()]
-            objectives_payload = [o.to_dict() for o in self.objective_mgr.objectives] if self.objective_mgr.objectives else []
         self._broadcast({
             "type": MSG_SNAPSHOT,
             "phase": self.round_mgr.phase,
@@ -422,5 +483,4 @@ class GameServer:
             "mode": self.round_mgr.mode,
             "map": self.round_mgr.map_key,
             "players": players_payload,
-            "objectives": objectives_payload,
         })

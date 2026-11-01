@@ -58,10 +58,11 @@ def _menu_btn(parent, text, pos, command, fg, hover_fg=None, scale=0.065, width=
 
 
 class MainMenu:
-    def __init__(self, on_host, on_join, on_quit):
+    def __init__(self, on_host, on_join, on_quit, on_char_change):
         self.on_host = on_host
         self.on_join = on_join
         self.on_quit = on_quit
+        self.on_char_change = on_char_change
 
         self._aspect2d = builtins.base.aspect2d
         self.root = self._aspect2d.attachNewNode("main_menu")
@@ -69,81 +70,113 @@ class MainMenu:
 
 
         self._bg_img = None
-        bg_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "menu_bg.jpg")
+        bg_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "new_assets", "background", "menu_bg.jpg")
         if os.path.exists(bg_path):
             try:
-                tex = builtins.base.loader.loadTexture(Filename.fromOsSpecific(bg_path))
-                if tex:
-                    cm = CardMaker("menu_bg_card")
-                    cm.setFrame(-2.5, 2.5, -1.5, 1.5)
-                    self._bg_img = self.root.attachNewNode(cm.generate())
-                    self._bg_img.setTexture(tex)
-                    self._bg_img.setColor(1, 1, 1, 1.0)
-                    self._bg_img.setBin("background", 1)
-                    self._bg_img.setDepthWrite(False)
-                    self._bg_img.setDepthTest(False)
-            except Exception:
-                pass
+                import math
+                from panda3d.core import Filename
+                from direct.gui.OnscreenImage import OnscreenImage
+                
+                unix_path = Filename.fromOsSpecific(bg_path).getFullpath()
+                tex = builtins.base.loader.loadTexture(unix_path)
+                
+                self._bg_img = OnscreenImage(image=tex, parent=builtins.base.camera)
+                dist = 200
+                self._bg_img.setPos(0, dist, 0)
+                
+                # Scale to perfectly fit the camera FOV
+                fov = builtins.base.camLens.getFov()
+                half_w = math.tan(math.radians(fov[0] / 2.0)) * dist
+                half_h = math.tan(math.radians(fov[1] / 2.0)) * dist
+                self._bg_img.setScale(half_w, 1, half_h)
+                
+                self._bg_img.setBin("background", 10)
+                self._bg_img.setDepthWrite(False)
+                self._bg_img.setDepthTest(False)
+                self._bg_img.setLightOff(1)
+                self._bg_img.clearShader()
+            except Exception as e:
+                print(f"Failed to load menu bg: {e}")
 
 
 
         _label(self.root, "MORPH HUNT",
-               pos=(0, 0, 0.72), scale=0.18,
+               pos=(0, 0, 0.80), scale=0.15,
                fg=_c(240, 245, 248),
                shadow=(0, 0, 0, 0.7))
 
-        _label(self.root, "MAIN MENU",
-               pos=(0, 0, 0.56), scale=0.065,
-               fg=_c(220, 245, 255),
-               shadow=(0, 0, 0, 0.8))
+        # Anchor nodes for edges
+        self.top_left = builtins.base.a2dTopLeft
+        self.top_right = builtins.base.a2dTopRight
+        self.bottom_left = builtins.base.a2dBottomLeft
+        self.bottom_right = builtins.base.a2dBottomRight
 
-        _label(self.root, "\u2022  HIDE  \u2022  MORPH  \u2022  SURVIVE  \u2022",
-               pos=(0, 0, 0.44), scale=0.048,
-               fg=_c(240, 180, 70, 0.9),
-               shadow=(0, 0, 0, 0.5))
+        # TOP LEFT: PROFILE
+        self._profile_btn = _menu_btn(
+            self.root, "PROFILE", (0.3, 0, -0.15), self._do_profile,
+            _c(220, 235, 238), _c(80, 240, 230), scale=0.06
+        )
+        self._profile_btn.reparentTo(self.top_left)
 
-        _menu_btn(self.root, "HOST GAME", (0, 0, 0.20), self._do_host,
-                  _c(220, 235, 238), _c(80, 240, 230))
+        # TOP RIGHT: NEWS / TIPS
+        self.tips = [
+            "Tip: Listen carefully for nearby footsteps.",
+            "Tip: Hiders can morph into objects.",
+            "Tip: Hunters can use their scanner to find suspicious objects.",
+            "Tip: Stay moving while hiding.",
+            "Tip: Sound can reveal your position."
+        ]
+        self.tip_idx = 0
+        
+        # Wrap long tips
+        self.tip_label = _label(self.root, self.tips[0], (-0.1, 0, -0.15), 0.045, _c(240, 180, 70), align=TextNode.ARight, shadow=(0,0,0,1))
+        self.tip_label["text_wordwrap"] = 20
+        self.tip_label.reparentTo(self.top_right)
+        
+        # CENTER: CHARACTER SHOWCASE
+        self.char_idx = 1
+        self._left_btn = _menu_btn(self.root, "<", (-0.6, 0, 0.0), self._prev_char, _c(255, 255, 255), scale=0.1)
+        self._right_btn = _menu_btn(self.root, ">", (0.6, 0, 0.0), self._next_char, _c(255, 255, 255), scale=0.1)
+        self.char_name_label = _label(self.root, f"Character {self.char_idx}", (0, 0, -0.7), 0.06, _c(220, 245, 255), align=TextNode.ACenter, shadow=(0,0,0,0.8))
 
-        _menu_btn(self.root, "JOIN GAME", (0, 0, 0.04), self._do_join,
-                  _c(220, 235, 238), _c(80, 240, 230))
-
+        # BOTTOM LEFT: HOW TO PLAY, SETTINGS
         self._howto_btn = _menu_btn(
-            self.root, "HOW TO PLAY", (0, 0, -0.12), self._do_howto,
-            _c(220, 235, 238), _c(80, 240, 230))
+            self.root, "HOW TO PLAY", (0.4, 0, 0.25), self._do_howto,
+            _c(220, 235, 238), _c(80, 240, 230), scale=0.06)
+        self._howto_btn.reparentTo(self.bottom_left)
 
         self._settings_btn = _menu_btn(
-            self.root, "SETTINGS", (0, 0, -0.28), self._do_settings,
-            _c(220, 235, 238), _c(80, 240, 230))
+            self.root, "SETTINGS", (0.32, 0, 0.15), self._do_settings,
+            _c(220, 235, 238), _c(80, 240, 230), scale=0.06)
+        self._settings_btn.reparentTo(self.bottom_left)
 
-        _menu_btn(self.root, "QUIT", (0, 0, -0.44), on_quit,
-                  _c(225, 140, 140), _c(255, 110, 100))
+        # BOTTOM RIGHT: START
+        self._start_btn = _menu_btn(
+            self.root, "START GAME", (-0.4, 0, 0.25), self._do_start,
+            _c(80, 240, 230), _c(120, 255, 240), scale=0.08)
+        self._start_btn.reparentTo(self.bottom_right)
 
-        sep = DirectFrame(
-            parent=self.root,
-            frameColor=_c(80, 225, 220, 0.3),
-            frameSize=(-0.3, 0.3, -0.001, 0.001),
-            pos=(0, 0, -0.58),
-            sortOrder=5,
-        )
+        self._quit_btn = _menu_btn(
+            self.root, "QUIT", (-0.2, 0, 0.12), on_quit,
+            _c(225, 140, 140), _c(255, 110, 100), scale=0.05)
+        self._quit_btn.reparentTo(self.bottom_right)
 
-        _label(self.root, "LAN MULTIPLAYER",
-               pos=(0, 0, -0.66), scale=0.038,
-               fg=_c(100, 200, 205, 0.8))
-
-        _label(self.root, "v1.0",
-               pos=(0, 0, -0.72), scale=0.032,
-               fg=_c(80, 160, 165, 0.6))
-
-        _label(self.root, "\u00A9 2025 Morph Hunt",
-               pos=(0, 0, -0.92), scale=0.030,
-               fg=_c(60, 120, 125, 0.5))
+        self._edge_nodes = [
+            self._profile_btn, self.tip_label, self._howto_btn,
+            self._settings_btn, self._start_btn, self._quit_btn
+        ]
 
         self._howto_panel = self._build_howto()
         self._howto_panel.hide()
 
         self._settings_panel = self._build_settings()
         self._settings_panel.hide()
+        
+        self._play_panel = self._build_play()
+        self._play_panel.hide()
+        
+        self._profile_panel = self._build_profile()
+        self._profile_panel.hide()
 
     def _build_howto(self):
         panel = DirectFrame(
@@ -186,8 +219,7 @@ class MainMenu:
         _label(panel, (
             "Find disguised Hiders among objects\n"
             "Use your Scanner to detect nearby Hiders\n"
-            "Fire your Energy Blaster to eliminate\n"
-            "Use your Flashlight in dark areas\n"
+            "Shoot your weapon to eliminate Hiders\n"
             "Watch for movement - objects don't move!"
         ), pos=(col_right_x, 0, 0.58), scale=0.042,
                fg=_c(200, 215, 218), align=TextNode.ALeft)
@@ -248,6 +280,58 @@ class MainMenu:
 
         return panel
 
+    def _build_play(self):
+        panel = DirectFrame(
+            parent=self.root,
+            frameColor=_c(15, 20, 30, 0.95),
+            frameSize=(-0.6, 0.6, -0.5, 0.5),
+            pos=(0, 0, 0),
+            sortOrder=30,
+        )
+        _label(panel, "PLAY", pos=(0, 0, 0.35), scale=0.08, fg=_c(80, 240, 230))
+        _menu_btn(panel, "HOST GAME", (0, 0, 0.1), self._do_host, _c(220, 235, 238), _c(80, 240, 230))
+        _menu_btn(panel, "JOIN GAME", (0, 0, -0.1), self._do_join, _c(220, 235, 238), _c(80, 240, 230))
+        _menu_btn(panel, "CANCEL", (0, 0, -0.35), self._close_start, _c(225, 140, 140), _c(255, 110, 100))
+        return panel
+        
+    def _build_profile(self):
+        panel = DirectFrame(
+            parent=self.root,
+            frameColor=_c(8, 10, 20, 0.97),
+            frameSize=(-0.8, 0.8, -0.8, 0.8),
+            pos=(0, 0, 0),
+            sortOrder=30,
+        )
+        _label(panel, "PROFILE", pos=(0, 0, 0.65), scale=0.1, fg=_c(80, 240, 230))
+        
+        _label(panel, "PLAYER NAME", pos=(-0.4, 0, 0.4), scale=0.05, fg=_c(200, 200, 200), align=TextNode.ALeft)
+        self.profile_name = DirectEntry(parent=panel, initialText="Player", scale=0.05, pos=(-0.4, 0, 0.3), width=10, frameColor=_c(30, 30, 40), text_fg=_c(255,255,255))
+        from client.profile import get_profile_name
+        saved_name = get_profile_name()
+        if saved_name:
+            self.profile_name.enterText(saved_name)
+        
+        stats = [
+            ("LEVEL", "1"),
+            ("GAMES PLAYED", "0"),
+            ("WINS", "0"),
+            ("LOSSES", "0"),
+            ("WIN RATE", "0.0%")
+        ]
+        
+        self._stat_labels = {}
+        y = 0.1
+        for title, val in stats:
+            _label(panel, title, pos=(-0.4, 0, y), scale=0.045, fg=_c(150, 150, 150), align=TextNode.ALeft)
+            lbl = _label(panel, val, pos=(0.4, 0, y), scale=0.045, fg=_c(200, 220, 220), align=TextNode.ARight)
+            self._stat_labels[title] = lbl
+            y -= 0.15
+            
+        _menu_btn(panel, "SAVE", (-0.3, 0, -0.65), self._close_profile, _c(80, 240, 230), scale=0.06)
+        _menu_btn(panel, "CLOSE", (0.3, 0, -0.65), self._close_profile, _c(225, 140, 140), scale=0.06)
+        
+        return panel
+
     def _build_settings(self):
         panel = DirectFrame(
             parent=self.root,
@@ -295,24 +379,120 @@ class MainMenu:
 
         return panel
 
-    def _do_host(self):  self.on_host()
-    def _do_join(self):  self.on_join()
+    def _prev_char(self):
+        self.char_idx -= 1
+        if self.char_idx < 1: self.char_idx = 10
+        self.char_name_label["text"] = f"Character {self.char_idx}"
+        self.on_char_change(self.char_idx)
+        
+    def _next_char(self):
+        self.char_idx += 1
+        if self.char_idx > 10: self.char_idx = 1
+        self.char_name_label["text"] = f"Character {self.char_idx}"
+        self.on_char_change(self.char_idx)
+
+    def _do_start(self): self._play_panel.show()
+    def _close_start(self): self._play_panel.hide()
+    
+    def _do_profile(self): 
+        from game.stats_db import StatsDB
+        from game.progression import get_level
+        from client.profile import get_profile_id
+        
+        profile_id = get_profile_id()
+        db = StatsDB()
+        stats = db.get_stats(profile_id)
+        
+        if stats:
+            xp = stats.get("total_xp", 0)
+            level = get_level(xp)
+            played = stats.get("rounds_played", 0)
+            wins = stats.get("rounds_won", 0)
+            losses = played - wins
+            win_rate = (wins / played * 100) if played > 0 else 0.0
+            
+            self._stat_labels["LEVEL"]["text"] = f"{level}  (XP: {xp})"
+            self._stat_labels["GAMES PLAYED"]["text"] = str(played)
+            self._stat_labels["WINS"]["text"] = str(wins)
+            self._stat_labels["LOSSES"]["text"] = str(losses)
+            self._stat_labels["WIN RATE"]["text"] = f"{win_rate:.1f}%"
+        else:
+            self._stat_labels["LEVEL"]["text"] = "1  (XP: 0)"
+            self._stat_labels["GAMES PLAYED"]["text"] = "0"
+            self._stat_labels["WINS"]["text"] = "0"
+            self._stat_labels["LOSSES"]["text"] = "0"
+            self._stat_labels["WIN RATE"]["text"] = "0.0%"
+            
+        self._profile_panel.show()
+    def _close_profile(self):
+        from client.profile import set_profile_name
+        set_profile_name(self.profile_name.get())
+        self._profile_panel.hide()
+
+    def _do_host(self): 
+        self._play_panel.hide()
+        self.on_host(self.profile_name.get())
+    def _do_join(self): 
+        self._play_panel.hide()
+        self.on_join(self.profile_name.get())
     def _do_howto(self): self._howto_panel.show()
     def _close_howto(self): self._howto_panel.hide()
     def _do_settings(self): self._settings_panel.show()
     def _close_settings(self): self._settings_panel.hide()
 
-    def show(self):   self.root.show()
-    def hide(self):   self.root.hide()
-    def update(self): pass
+    def show(self):   
+        self.root.show()
+        for node in self._edge_nodes: node.show()
+        if hasattr(self, '_bg_img') and self._bg_img:
+            self._bg_img.show()
+        # Initialize character on show
+        self.on_char_change(self.char_idx)
+        
+    def hide(self):
+        self.root.hide()
+        for node in self._edge_nodes: node.hide()
+        if hasattr(self, '_bg_img') and self._bg_img:
+            self._bg_img.hide()
+    
+    def update(self):
+        if hasattr(self, '_bg_img') and self._bg_img:
+            import math
+            fov = builtins.base.camLens.getFov()
+            dist = 200
+            half_w = math.tan(math.radians(fov[0] / 2.0)) * dist
+            half_h = math.tan(math.radians(fov[1] / 2.0)) * dist
+            self._bg_img.setScale(half_w, 1, half_h)
+
+        self.tip_idx += 1
+        if self.tip_idx % 300 == 0:  # ~every 5 seconds at 60fps
+            tip = self.tips[(self.tip_idx // 300) % len(self.tips)]
+            self.tip_label["text"] = tip
+            
+        if hasattr(self, '_showcase_actor') and self._showcase_actor and builtins.base.mouseWatcherNode.hasMouse():
+            m_x = builtins.base.mouseWatcherNode.getMouseX()
+            from panda3d.core import MouseButton
+            if builtins.base.mouseWatcherNode.isButtonDown(MouseButton.one()):
+                if not hasattr(self, '_last_mx'):
+                    self._last_mx = m_x
+                dx = m_x - self._last_mx
+                # Inverted: positive dx rotates right instead of left
+                self._showcase_actor.setH(self._showcase_actor.getH() + dx * 200)
+                self._last_mx = m_x
+            else:
+                if hasattr(self, '_last_mx'):
+                    del self._last_mx
+
     def input(self, key): pass
 
 
 class ConnectDialog:
-    def __init__(self, on_submit, on_cancel, mode="join"):
+    def __init__(self, on_submit, on_cancel, mode="join", player_name="Player"):
         self.on_submit = on_submit
         self.on_cancel = on_cancel
         self.mode = mode
+        self._udp_sock = None
+        self._servers = set()
+        self._task = None
 
         self.root = builtins.base.aspect2d.attachNewNode("connect_dialog")
 
@@ -335,52 +515,96 @@ class ConnectDialog:
                pos=(0, 0, 0.65), scale=0.046, fg=_c(140, 185, 190))
 
         _label(self.root, "PLAYER NAME",
-               pos=(-0.55, 0, 0.48), scale=0.050, fg=_c(110, 220, 215),
+               pos=(-0.55, 0, 0.45), scale=0.050, fg=_c(110, 220, 215),
                align=TextNode.ALeft)
-        self._name_entry = DirectEntry(
-            parent=self.root,
-            initialText="Player",
-            scale=0.058,
-            pos=(-0.70, 0, 0.32),
-            width=11,
-            frameColor=_c(20, 24, 38),
-            text_fg=_c(230, 230, 230),
-            relief=1,
-        )
-
-        addr_label   = "SERVER ADDRESS" if mode == "join" else "SERVER PORT"
-        addr_default = "127.0.0.1:5555" if mode == "join" else "5555"
-
-        _label(self.root, addr_label,
-               pos=(-0.55, 0, 0.12), scale=0.050, fg=_c(110, 220, 215),
+        
+        self._name_label = _label(self.root, player_name, 
+               pos=(-0.55, 0, 0.35), scale=0.055, fg=_c(180, 200, 200),
                align=TextNode.ALeft)
-        self._addr_entry = DirectEntry(
-            parent=self.root,
-            initialText=addr_default,
-            scale=0.058,
-            pos=(-0.70, 0, -0.04),
-            width=11,
-            frameColor=_c(20, 24, 38),
-            text_fg=_c(230, 230, 230),
-            relief=1,
-        )
 
-        submit_text = "JOIN SERVER" if mode == "join" else "START HOSTING"
-        _menu_btn(self.root, submit_text, (0, 0, -0.34), self._submit,
-                  _c(80, 240, 230))
-        _menu_btn(self.root, "CANCEL", (0, 0, -0.54), self._cancel,
+        if mode == "join":
+            _label(self.root, "DISCOVERED SERVERS:",
+                   pos=(-0.55, 0, 0.12), scale=0.050, fg=_c(110, 220, 215),
+                   align=TextNode.ALeft)
+                   
+            from direct.gui.DirectScrolledList import DirectScrolledList
+            self.server_list = DirectScrolledList(
+                parent=self.root,
+                decButton_pos=(0.35, 0, 0.5),
+                decButton_text="^",
+                decButton_text_scale=0.04,
+                decButton_borderWidth=(0.005, 0.005),
+                incButton_pos=(0.35, 0, -0.02),
+                incButton_text="v",
+                incButton_text_scale=0.04,
+                incButton_borderWidth=(0.005, 0.005),
+                frameSize=(-0.4, 0.4, -0.05, 0.55),
+                frameColor=_c(20, 24, 38),
+                pos=(-0.15, 0, -0.3),
+                numItemsVisible=5,
+                forceHeight=0.1,
+                itemFrame_frameColor=(0,0,0,0),
+                itemFrame_pos=(0, 0, 0.4),
+            )
+            
+            _menu_btn(self.root, "CONNECT TO SELECTED", (0, 0, -0.45), self._submit,
+                      _c(80, 240, 230))
+                      
+            import socket
+            self._udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self._udp_sock.setblocking(False)
+            try:
+                self._udp_sock.bind(('', 5556))
+            except Exception:
+                pass
+            self._task = builtins.base.taskMgr.add(self._poll_servers, "poll_servers")
+            
+        else:
+            _menu_btn(self.root, "START HOSTING", (0, 0, -0.34), self._submit,
+                      _c(80, 240, 230))
+                      
+        _menu_btn(self.root, "CANCEL", (0, 0, -0.54 if mode == "join" else -0.54), self._cancel,
                   _c(215, 120, 120))
 
         self._status = _label(self.root, "",
                               pos=(0, 0, -0.76), scale=0.046,
                               fg=_c(170, 190, 195))
 
+    def _poll_servers(self, task):
+        if not self._udp_sock: return task.done
+        try:
+            while True:
+                data, addr = self._udp_sock.recvfrom(1024)
+                if data == b"MORPH_HUNT_SERVER" and addr[0] not in self._servers:
+                    self._servers.add(addr[0])
+                    btn = _menu_btn(None, f"Server ({addr[0]})", (0,0,0), 
+                                  lambda a=addr[0]: self.server_list.selectListItem(btn), 
+                                  _c(230, 230, 230), hover_fg=_c(80, 240, 230))
+                    # Store address on the button for retrieval
+                    btn.server_addr = addr[0]
+                    self.server_list.addItem(btn)
+        except BlockingIOError:
+            pass
+        except Exception:
+            pass
+        return task.cont
+
     def _submit(self):
-        name = self._name_entry.get().strip() or "Player"
-        addr = self._addr_entry.get().strip()
-        self._status["text"] = ("STARTING SERVER..." if self.mode == "host"
-                                else "CONNECTING...")
-        self.on_submit(name, addr)
+        if self.mode == "join":
+            # Get selected server
+            selected = self.server_list.getSelectedIndex()
+            if selected < 0 or selected >= len(self.server_list['items']):
+                self._status["text"] = "PLEASE SELECT A SERVER"
+                return
+            btn = self.server_list['items'][selected]
+            addr = getattr(btn, 'server_addr', '127.0.0.1')
+            addr = f"{addr}:5555"
+            self._status["text"] = "CONNECTING..."
+        else:
+            addr = "5555"
+            self._status["text"] = "STARTING SERVER..."
+            
+        self.on_submit(addr)
 
     def _cancel(self): self.on_cancel()
 
@@ -390,4 +614,8 @@ class ConnectDialog:
     def input(self, key): pass
 
     def destroy(self):
+        if self._task:
+            builtins.base.taskMgr.remove(self._task)
+        if self._udp_sock:
+            self._udp_sock.close()
         self.root.removeNode()

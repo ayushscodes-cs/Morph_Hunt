@@ -1,1 +1,11 @@
+# Core 3D Engine & Runtime
 panda3d>=1.10.14
+
+# 3D Asset Pipeline (.gltf / .glb model loader)
+panda3d-gltf>=1.3.0
+
+# Physically Based Rendering (PBR) Shader Pipeline
+panda3d-simplepbr>=0.13.0
+
+# Optional: Standalone executable packaging
+# pyinstaller>=6.0.0
