@@ -48,7 +48,12 @@ class RoundManager:
         """Randomly assign one-third (min 1) of players as Hunters."""
         eligible = [p for p in players if not p.spectator]
         random.shuffle(eligible)
-        n_hunters = max(1, len(eligible) // 3)
+        
+        if self.mode == "clash_squad":
+            n_hunters = max(1, len(eligible) // 2) if len(eligible) > 1 else 1
+        else:
+            n_hunters = max(1, len(eligible) // 3)
+            
         for i, p in enumerate(eligible):
             p.reset_for_new_round()
             p.role = ROLE_HUNTER if i < n_hunters else ROLE_HIDER
@@ -71,10 +76,6 @@ class RoundManager:
         hunters = [p for p in players if p.role == ROLE_HUNTER]
         alive_hiders = [p for p in hiders if p.alive]
 
-        if self.mode == "object_rush":
-            required = objective_mgr.required_count(self.mode)
-            if required and objective_mgr.completed_count() >= required:
-                return self._build_result(players, winner="hiders", reason="Objectives completed!")
 
         if not alive_hiders and hiders:
             return self._build_result(players, winner="hunters", reason="All Hiders eliminated!")
@@ -90,6 +91,7 @@ class RoundManager:
 
     def _build_result(self, players, winner, reason):
         for p in players:
+            p.xp += settings.XP_PARTICIPATION
             if winner == "hiders" and p.role == ROLE_HIDER:
                 p.xp += settings.XP_WIN_BONUS
             if winner == "hunters" and p.role == ROLE_HUNTER:
@@ -100,6 +102,7 @@ class RoundManager:
             "players": [
                 {
                     "player_id": p.player_id,
+                    "profile_id": p.profile_id,
                     "name": p.name,
                     "role": p.role,
                     "survived": p.survived or (p.alive and p.role == ROLE_HIDER),

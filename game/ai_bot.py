@@ -49,8 +49,8 @@ class AIBot:
         self.target_pos = None
         self.patrol_points = []
         for r in level_def.get("rooms", []):
-            cx, cz = r["position"]
-            self.patrol_points.append([cx, 1.0, cz])
+            cx, cy = r["position"] # assuming 2D rooms are X, Y
+            self.patrol_points.append([cx, cy, 1.0])
         random.shuffle(self.patrol_points)
 
     def tick(self, dt, phase, all_players, level_def, server):
@@ -80,20 +80,20 @@ class AIBot:
                 spots = level_def.get("hider_spawn_objects", [])
                 if spots:
                     s = random.choice(spots)
-                    self.target_pos = [s["position"][0], 0.5, s["position"][2]]
+                    self.target_pos = list(s["position"])
                 else:
-                    self.target_pos = [random.uniform(-10, 10), 0.5, random.uniform(-10, 10)]
+                    self.target_pos = [random.uniform(-10, 10), random.uniform(-10, 10), 0.5]
 
             # 3. Move towards target spot
             dx = self.target_pos[0] - self.player.position[0]
-            dz = self.target_pos[2] - self.player.position[2]
+            dz = self.target_pos[1] - self.player.position[1]
             dist = math.sqrt(dx * dx + dz * dz)
 
             if dist > 0.6:
                 angle = math.atan2(dx, dz)
                 speed = settings.PLAYER_WALK_SPEED * 0.8
                 self.player.position[0] += math.sin(angle) * speed * dt
-                self.player.position[2] += math.cos(angle) * speed * dt
+                self.player.position[1] += math.cos(angle) * speed * dt
                 self.player.rotation_y = math.degrees(angle)
                 self.player.move_input = [1.0, 0.0]
             else:
@@ -138,19 +138,19 @@ class AIBot:
         if nearest_hider and min_dist <= settings.ATTACK_RANGE:
             self.target_pos = list(nearest_hider.position)
             # Attack
-            server._handle_attack(self.player)
+            server._handle_attack(self.player, nearest_hider.player_id)
 
         # Move towards target
         if self.target_pos:
             dx = self.target_pos[0] - self.player.position[0]
-            dz = self.target_pos[2] - self.player.position[2]
+            dz = self.target_pos[1] - self.player.position[1]
             dist = math.sqrt(dx * dx + dz * dz)
 
             if dist > 0.8:
                 angle = math.atan2(dx, dz)
                 speed = settings.PLAYER_WALK_SPEED * 0.9
                 self.player.position[0] += math.sin(angle) * speed * dt
-                self.player.position[2] += math.cos(angle) * speed * dt
+                self.player.position[1] += math.cos(angle) * speed * dt
                 self.player.rotation_y = math.degrees(angle)
                 self.player.move_input = [1.0, 0.0]
             else:
@@ -160,7 +160,5 @@ class AIBot:
         # Use scanner sonar periodically
         if (now - self.player.last_scanner_time) >= (settings.SCANNER_COOLDOWN + 2.0):
             self.player.last_scanner_time = now
-            server.connections[self.player.player_id].send = lambda *args: None if self.player.player_id not in server.connections else None
-            # Trigger scanner logic
             from game.hunter import try_scanner
             try_scanner(self.player, all_players, now=now)

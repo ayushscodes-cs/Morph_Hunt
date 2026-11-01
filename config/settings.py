@@ -1,7 +1,7 @@
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 5555
 CONNECT_TIMEOUT = 5.0
-MAX_PLAYERS = 8
+MAX_PLAYERS = 10
 MIN_PLAYERS_TO_START = 2
 TICK_RATE = 20
 SNAPSHOT_RATE = 12
@@ -36,22 +36,28 @@ SCANNER_MAX_CHARGES = 3
 SCANNER_CHARGE_REGEN_SECONDS = 25
 SCANNER_CLUE_RADIUS_BUCKETS = [3, 7, 14]
 
-ATTACK_RANGE = 6.0
+ATTACK_RANGE = 150.0
 ATTACK_COOLDOWN = 1.2
 ATTACK_DAMAGE = 34
 ATTACK_FALSE_HIT_PENALTY = 5
 
 OBJECT_PERSONALITIES = {
-    "chair":   {"display": "Chair",        "camouflage": 0.55, "speed_mult": 0.85, "scale": (0.8, 1.0, 0.8), "energy_mult": 1.0, "model": "cube", "color": (140, 90, 50)},
-    "box":     {"display": "Box",          "camouflage": 0.85, "speed_mult": 0.55, "scale": (1.0, 1.0, 1.0), "energy_mult": 0.8, "model": "cube", "color": (170, 140, 90)},
-    "plant":   {"display": "Plant",        "camouflage": 0.9,  "speed_mult": 0.35, "scale": (0.6, 1.4, 0.6), "energy_mult": 0.7, "model": "cube", "color": (40, 120, 50)},
-    "lamp":    {"display": "Lamp",         "camouflage": 0.6,  "speed_mult": 0.5,  "scale": (0.4, 1.3, 0.4), "energy_mult": 0.9, "model": "cube", "color": (230, 210, 140)},
-    "bin":     {"display": "Trash Bin",    "camouflage": 0.8,  "speed_mult": 0.6,  "scale": (0.7, 1.0, 0.7), "energy_mult": 0.85,"model": "cube", "color": (90, 90, 90)},
-    "barrel":  {"display": "Barrel",       "camouflage": 0.65, "speed_mult": 0.55, "scale": (0.8, 1.2, 0.8), "energy_mult": 0.9, "model": "cube", "color": (120, 60, 40)},
-    "crate":   {"display": "Crate",        "camouflage": 0.7,  "speed_mult": 0.6,  "scale": (1.0, 1.0, 1.0), "energy_mult": 0.85,"model": "cube", "color": (150, 110, 60)},
-    "monitor": {"display": "Monitor",      "camouflage": 0.5,  "speed_mult": 0.4,  "scale": (0.9, 0.7, 0.15),"energy_mult": 1.1, "model": "cube", "color": (30, 30, 30)},
-    "table":   {"display": "Table",        "camouflage": 0.3,  "speed_mult": 0.3,  "scale": (1.6, 0.8, 1.0), "energy_mult": 1.3, "model": "cube", "color": (110, 75, 45)},
-    "cart":    {"display": "Cart",         "camouflage": 0.4,  "speed_mult": 1.15, "scale": (1.2, 1.0, 0.7), "energy_mult": 1.2, "model": "cube", "color": (100, 100, 110)},
+    "TrashCommercial": {"display": "Dumpster", "camouflage": 0.8, "speed_mult": 0.7, "scale": (1.8, 1.2, 1.2), "energy_mult": 0.8, "model": "TrashCommercial"},
+    "Bench": {"display": "Bench", "camouflage": 0.5, "speed_mult": 0.8, "scale": (1.5, 0.6, 0.8), "energy_mult": 1.0, "model": "Bench"},
+    "FireHydrant": {"display": "Fire Hydrant", "camouflage": 0.9, "speed_mult": 1.1, "scale": (0.5, 0.5, 1.0), "energy_mult": 0.7, "model": "FireHydrant"},
+    "ParkingMeter": {"display": "Parking Meter", "camouflage": 0.9, "speed_mult": 1.1, "scale": (0.3, 0.3, 1.2), "energy_mult": 0.7, "model": "ParkingMeter"},
+    "PostBox": {"display": "Post Box", "camouflage": 0.7, "speed_mult": 0.9, "scale": (0.8, 0.8, 1.5), "energy_mult": 0.9, "model": "PostBox"},
+    "pallet1": {"display": "Pallet", "camouflage": 0.85, "speed_mult": 1.0, "scale": (1.5, 1.5, 0.2), "energy_mult": 0.85, "model": "pallet1"},
+    "Utility": {"display": "Utility Box", "camouflage": 0.75, "speed_mult": 0.8, "scale": (1.0, 1.0, 1.5), "energy_mult": 0.9, "model": "Utility"},
+    "ConcreteBench": {"display": "Concrete Bench", "camouflage": 0.6, "speed_mult": 0.8, "scale": (1.5, 0.6, 0.6), "energy_mult": 1.0, "model": "ConcreteBench"},
+    "TrashCanSmall": {"display": "Trash Can", "camouflage": 0.85, "speed_mult": 1.0, "scale": (0.6, 0.6, 0.8), "energy_mult": 0.8, "model": "TrashCanSmall"},
+    "Couch": {"display": "Couch", "camouflage": 0.8, "speed_mult": 0.7, "scale": (2.0, 1.0, 1.2), "energy_mult": 0.8, "model": "Couch"},
+    "TV": {"display": "Television", "camouflage": 0.9, "speed_mult": 1.1, "scale": (1.0, 0.2, 0.7), "energy_mult": 0.7, "model": "TV"},
+    "Bed": {"display": "Bed", "camouflage": 0.6, "speed_mult": 0.6, "scale": (2.2, 2.0, 0.8), "energy_mult": 0.9, "model": "Bed"},
+    "Refrigerator": {"display": "Fridge", "camouflage": 0.7, "speed_mult": 0.7, "scale": (1.2, 1.2, 2.4), "energy_mult": 0.85, "model": "Refrigerator"},
+    "Tree": {"display": "Tree", "camouflage": 0.95, "speed_mult": 0.4, "scale": (3.0, 3.0, 8.0), "energy_mult": 1.2, "model": "Tree"},
+    "Toilet": {"display": "Toilet", "camouflage": 0.8, "speed_mult": 0.9, "scale": (0.6, 0.8, 1.0), "energy_mult": 0.8, "model": "Toilet"},
+    "Fence": {"display": "Fence", "camouflage": 0.85, "speed_mult": 0.7, "scale": (3.0, 0.2, 1.5), "energy_mult": 0.8, "model": "Fence"}
 }
 
 OBJECTIVES_TO_WIN = {
@@ -62,7 +68,14 @@ OBJECTIVES_TO_WIN = {
 OBJECTIVE_INTERACT_RANGE = 2.2
 OBJECTIVE_HOLD_SECONDS = 3.0
 
-GAME_MODES = ["classic", "object_rush", "infection"]
+GAME_MODES = ["classic", "object_rush", "infection", "clash_squad"]
+
+MODE_UNLOCK_LEVELS = {
+    "classic": 1,
+    "object_rush": 2,
+    "infection": 3,
+    "clash_squad": 5
+}
 
 LEVELS = ["house"]
 
@@ -70,4 +83,5 @@ XP_SURVIVE_ROUND = 50
 XP_PER_OBJECTIVE = 25
 XP_PER_ELIMINATION = 30
 XP_WIN_BONUS = 40
+XP_PARTICIPATION = 50
 DB_PATH = "morph_hunt_stats.db"

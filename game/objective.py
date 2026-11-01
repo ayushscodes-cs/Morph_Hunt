@@ -1,98 +1,130 @@
 """
-Hider objectives: switches, energy fragments, terminals, control panels.
-
-Objectives force Hiders to leave safe hiding spots, creating risk/reward.
-Fully data-driven: each level defines its own objective positions.
+Hider personal tasks: behaviors players must perform to win Object Rush.
+Tasks are randomly assigned per player.
 """
+import random
 import math
-import time
-
 from config import settings
+from game.object_prop import REGISTRY
 
-
-class Objective:
-    def __init__(self, obj_id: str, kind: str, position, label: str):
-        self.obj_id = obj_id
-        self.kind = kind          # "switch" | "fragment" | "terminal" | "panel"
-        self.position = list(position)
-        self.label = label
+class PersonalTask:
+    def __init__(self, task_type, target_val, description, **kwargs):
+        self.task_type = task_type
+        self.target_val = target_val
+        self.current_val = 0.0
+        self.description = description
         self.completed = False
-        self.progress = 0.0                # 0..OBJECTIVE_HOLD_SECONDS
-        self.active_player_id = None
+        for k, v in kwargs.items():
+            setattr(self, k, v)
 
     def to_dict(self):
         return {
-            "obj_id": self.obj_id,
-            "kind": self.kind,
-            "position": self.position,
-            "label": self.label,
-            "completed": self.completed,
-            "progress": round(self.progress, 2),
+            "type": self.task_type,
+            "desc": self.description,
+            "cur": round(self.current_val, 1),
+            "tgt": round(self.target_val, 1),
+            "done": self.completed
         }
 
+    def add_progress(self, amount):
+        if not self.completed:
+            self.current_val += amount
+            if self.current_val >= self.target_val:
+                self.current_val = self.target_val
+                self.completed = True
+                return True
+        return False
 
 class ObjectiveManager:
     def __init__(self):
-        self.objectives = []
+        # We don't store global objectives anymore, tasks are on PlayerState
+        pass
 
-    def load_for_level(self, level_def: dict):
-        self.objectives = []
-        for spec in level_def.get("objectives", []):
-            self.objectives.append(
-                Objective(spec["id"], spec["kind"], spec["position"], spec["label"])
-            )
+    def assign_tasks(self, players):
+        props = list(REGISTRY.keys())
+        for p in players:
+            if p.role == "hider":
+                p.personal_tasks = []
+                pool = ["morph", "move", "unmorphed", "jump", "taunt"]
+                random.shuffle(pool)
+                # Pick 3 tasks
+                for task_type in pool[:3]:
+                    if task_type == "morph":
+                        prop = random.choice(props)
+                        prop_name = prop.replace("_", " ").title()
+                        p.personal_tasks.append(PersonalTask("morph", 15.0, f"Morph into {prop_name} (15s)", prop=prop))
+                    elif task_type == "move":
+                        p.personal_tasks.append(PersonalTask("move", 50.0, "Travel 50m while morphed"))
+                    elif task_type == "unmorphed":
+                        p.personal_tasks.append(PersonalTask("unmorphed", 20.0, "Stay unmorphed (20s)"))
+                    elif task_type == "jump":
+                        p.personal_tasks.append(PersonalTask("jump", 10.0, "Jump 10 times while morphed"))
+                    elif task_type == "taunt":
+                        p.personal_tasks.append(PersonalTask("taunt", 3.0, "Taunt 3 times"))
 
-    def reset(self):
-        for o in self.objectives:
-            o.completed = False
-            o.progress = 0.0
-            o.active_player_id = None
+                # Extra state for tracking movement delta
+                p._last_pos = list(p.position)
 
-    def completed_count(self):
-        return sum(1 for o in self.objectives if o.completed)
-
-    def required_count(self, mode: str):
-        needed = settings.OBJECTIVES_TO_WIN.get(mode, 0)
-        return min(needed, len(self.objectives)) if needed else 0
-
-    def find_nearby(self, position, max_range=settings.OBJECTIVE_INTERACT_RANGE):
-        best = None
-        best_dist = max_range
-        for o in self.objectives:
-            if o.completed:
+    def tick(self, dt, players):
+        completed_tasks = []
+        for p in players:
+            if p.role != "hider" or not p.alive or not getattr(p, "personal_tasks", None):
                 continue
-            dist = math.sqrt(
-                (o.position[0] - position[0]) ** 2
-                + (o.position[1] - position[1]) ** 2
-                + (o.position[2] - position[2]) ** 2
-            )
-            if dist <= best_dist:
-                best = o
-                best_dist = dist
-        return best
+            
+            # Calc distance moved this tick
+            dx = p.position[0] - getattr(p, "_last_pos", p.position)[0]
+            dy = p.position[1] - getattr(p, "_last_pos", p.position)[1]
+            dz = p.position[2] - getattr(p, "_last_pos", p.position)[2]
+            dist = math.sqrt(dx*dx + dy*dy + dz*dz)
+            p._last_pos = list(p.position)
 
-    def tick(self, dt, interacting_map):
-        """
-        interacting_map: {player_id: objective_id or None} — which objective
-        each hider is currently holding interact near, computed by the
-        server each tick from position + input.
-        """
-        active_by_obj = {}
-        for pid, obj_id in interacting_map.items():
-            if obj_id:
-                active_by_obj.setdefault(obj_id, []).append(pid)
+            is_morphed = bool(p.transformed_into)
 
-        newly_completed = []
-        for o in self.objectives:
-            if o.completed:
+            for task in p.personal_tasks:
+                if task.completed:
+                    continue
+                
+                just_completed = False
+                if task.task_type == "morph":
+                    target_prop = getattr(task, "prop", None)
+                    if p.transformed_into == target_prop:
+                        just_completed = task.add_progress(dt)
+                
+                elif task.task_type == "move":
+                    if is_morphed:
+                        just_completed = task.add_progress(dist)
+                
+                elif task.task_type == "unmorphed":
+                    if not is_morphed:
+                        just_completed = task.add_progress(dt)
+
+                if just_completed:
+                    completed_tasks.append((p, task))
+                    
+        return completed_tasks
+
+    def handle_event(self, player, event_type):
+        """Called when a jump or taunt occurs."""
+        if not getattr(player, "personal_tasks", None):
+            return []
+            
+        completed_tasks = []
+        is_morphed = bool(player.transformed_into)
+        
+        for task in player.personal_tasks:
+            if task.completed:
                 continue
-            if o.obj_id in active_by_obj and active_by_obj[o.obj_id]:
-                o.progress = min(settings.OBJECTIVE_HOLD_SECONDS, o.progress + dt)
-                o.active_player_id = active_by_obj[o.obj_id][0]
-                if o.progress >= settings.OBJECTIVE_HOLD_SECONDS:
-                    o.completed = True
-                    newly_completed.append(o)
-            else:
-                o.progress = max(0.0, o.progress - dt * 0.5)
-                o.active_player_id = None
-        return newly_completed
+                
+            just_completed = False
+            if event_type == "jump" and task.task_type == "jump" and is_morphed:
+                just_completed = task.add_progress(1.0)
+            elif event_type == "taunt" and task.task_type == "taunt":
+                just_completed = task.add_progress(1.0)
+                
+            if just_completed:
+                completed_tasks.append((player, task))
+                
+        return completed_tasks
+
+    def required_count(self, mode):
+        return 0

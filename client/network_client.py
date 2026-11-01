@@ -20,7 +20,7 @@ class NetworkClient:
         self.incoming: "queue.Queue[dict]" = queue.Queue()
         self._recv_thread = None
 
-    def connect(self, host: str, port: int, name: str) -> (bool, str):
+    def connect(self, host: str, port: int, name: str, char_idx: int = 1) -> (bool, str):
         try:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.sock.settimeout(settings.CONNECT_TIMEOUT)
@@ -41,7 +41,8 @@ class NetworkClient:
         self.is_host = bool(welcome.get("is_host"))
         self.connected = True
 
-        self.send({"type": MSG_JOIN, "name": name})
+        from client.profile import get_profile_id
+        self.send({"type": MSG_JOIN, "profile_id": get_profile_id(), "name": name, "char_idx": char_idx})
 
         self._recv_thread = threading.Thread(target=self._recv_loop, daemon=True)
         self._recv_thread.start()

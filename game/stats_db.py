@@ -18,8 +18,9 @@ def _connect():
     conn = sqlite3.connect(settings.DB_PATH, check_same_thread=False)
     conn.execute(
         """
-        CREATE TABLE IF NOT EXISTS player_stats (
-            name TEXT PRIMARY KEY,
+        CREATE TABLE IF NOT EXISTS player_stats_v2 (
+            profile_id TEXT PRIMARY KEY,
+            name TEXT,
             total_xp INTEGER DEFAULT 0,
             rounds_played INTEGER DEFAULT 0,
             rounds_won INTEGER DEFAULT 0,
@@ -40,36 +41,36 @@ class StatsDB:
         except sqlite3.Error as e:
             print(f"[stats] disabled, could not open DB: {e}")
 
-    def record_round(self, name, xp_gained, won, eliminations, objectives_completed):
+    def record_round(self, profile_id, name, xp_gained, won, eliminations, objectives_completed):
         if not self._conn:
             return
         with _lock:
             try:
-                cur = self._conn.execute("SELECT total_xp FROM player_stats WHERE name = ?", (name,))
+                cur = self._conn.execute("SELECT total_xp FROM player_stats_v2 WHERE profile_id = ?", (profile_id,))
                 row = cur.fetchone()
                 if row is None:
                     self._conn.execute(
-                        "INSERT INTO player_stats (name, total_xp, rounds_played, rounds_won, "
-                        "eliminations, objectives_completed) VALUES (?, ?, 1, ?, ?, ?)",
-                        (name, xp_gained, 1 if won else 0, eliminations, objectives_completed),
+                        "INSERT INTO player_stats_v2 (profile_id, name, total_xp, rounds_played, rounds_won, "
+                        "eliminations, objectives_completed) VALUES (?, ?, ?, 1, ?, ?, ?)",
+                        (profile_id, name, xp_gained, 1 if won else 0, eliminations, objectives_completed),
                     )
                 else:
                     self._conn.execute(
-                        "UPDATE player_stats SET total_xp = total_xp + ?, rounds_played = rounds_played + 1, "
+                        "UPDATE player_stats_v2 SET name = ?, total_xp = ?, rounds_played = rounds_played + 1, "
                         "rounds_won = rounds_won + ?, eliminations = eliminations + ?, "
-                        "objectives_completed = objectives_completed + ? WHERE name = ?",
-                        (xp_gained, 1 if won else 0, eliminations, objectives_completed, name),
+                        "objectives_completed = objectives_completed + ? WHERE profile_id = ?",
+                        (name, xp_gained, 1 if won else 0, eliminations, objectives_completed, profile_id),
                     )
                 self._conn.commit()
             except sqlite3.Error as e:
                 print(f"[stats] write failed: {e}")
 
-    def get_stats(self, name):
+    def get_stats(self, profile_id):
         if not self._conn:
             return None
         cur = self._conn.execute(
             "SELECT total_xp, rounds_played, rounds_won, eliminations, objectives_completed "
-            "FROM player_stats WHERE name = ?", (name,),
+            "FROM player_stats_v2 WHERE profile_id = ?", (profile_id,),
         )
         row = cur.fetchone()
         if not row:

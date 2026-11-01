@@ -84,7 +84,7 @@ def scanner_regen_tick(hunter, now=None):
         hunter.last_scanner_charge_time = now
 
 
-def try_attack(hunter, all_players, now=None, target_id=None):
+def try_attack(hunter, all_players, now=None, target_id=None, weapon=1):
     """
     Resolve a Hunter's attack: hits the nearest alive Hider within range/
     cone in front of the hunter, OR the explicitly hit target_id. 
@@ -127,7 +127,14 @@ def try_attack(hunter, all_players, now=None, target_id=None):
     if not best_target:
         return True, "Attack missed.", None
 
-    best_target.health -= settings.ATTACK_DAMAGE
+    weapon_damage = {
+        1: 15, # Assault
+        2: 10, # Pistol
+        3: 40, # Shotgun
+        4: 12, # SMG
+    }
+    damage = weapon_damage.get(weapon, settings.ATTACK_DAMAGE)
+    best_target.health -= damage
     if best_target.health <= 0:
         eliminate_hider(best_target)
         hunter.eliminations += 1

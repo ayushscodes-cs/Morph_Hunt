@@ -1,85 +1,56 @@
-"""
-Procedural sound effects synthesizer for Morph Hunt.
-Provides instant audio feedback for all game actions using native Windows audio APIs.
-Thread-safe and non-blocking.
-"""
-import sys
-import threading
-import time
-
-
-def _play_async(fn):
-    threading.Thread(target=fn, daemon=True).start()
-
+import os
 
 class SoundManager:
-    @staticmethod
-    def laser():
-        """Blaster shot zap."""
-        if sys.platform == "win32":
-            import winsound
-            def _s():
-                winsound.Beep(1200, 35)
-                winsound.Beep(750, 45)
-            _play_async(_s)
+    _sounds = {}
 
     @staticmethod
-    def hit():
-        """Hitmarker chime when hitting an enemy."""
-        if sys.platform == "win32":
-            import winsound
-            def _s():
-                winsound.Beep(1800, 40)
-                winsound.Beep(2400, 50)
-            _play_async(_s)
+    def _play(rel_path):
+        from direct.showbase.ShowBaseGlobal import base
+        if not hasattr(base, 'loader'):
+            return
+            
+        if rel_path not in SoundManager._sounds:
+            _base_dir = os.path.dirname(os.path.dirname(__file__))
+            full_path = os.path.join(_base_dir, "new_assets", "audio", rel_path)
+            try:
+                from panda3d.core import Filename
+                model_path = Filename.fromOsSpecific(full_path).getFullpath()
+                snd = base.loader.loadSfx(model_path)
+                SoundManager._sounds[rel_path] = snd
+            except Exception as e:
+                print(f"Audio load error: {e}")
+                SoundManager._sounds[rel_path] = None
+                
+        snd = SoundManager._sounds[rel_path]
+        if snd:
+            snd.play()
 
     @staticmethod
-    def morph():
-        """Hider transform whoosh sound."""
-        if sys.platform == "win32":
-            import winsound
-            def _s():
-                winsound.Beep(500, 35)
-                winsound.Beep(850, 45)
-                winsound.Beep(1300, 60)
-            _play_async(_s)
+    def gun_fire(weapon_idx=1):
+        if weapon_idx == 1:
+            SoundManager._play("assault.wav")
+        elif weapon_idx == 2:
+            SoundManager._play("pistol.wav")
+        elif weapon_idx == 3:
+            SoundManager._play("shotgun.wav")
+        elif weapon_idx == 4:
+            SoundManager._play("smg.wav")
+        else:
+            SoundManager._play("assault.wav")
 
     @staticmethod
-    def scanner():
-        """Hunter sonar ping."""
-        if sys.platform == "win32":
-            import winsound
-            def _s():
-                winsound.Beep(1600, 80)
-                time.sleep(0.04)
-                winsound.Beep(2100, 100)
-            _play_async(_s)
-
+    def laser(): pass
     @staticmethod
-    def taunt():
-        """Prop taunt whistle."""
-        if sys.platform == "win32":
-            import winsound
-            def _s():
-                for freq in (800, 1200, 1600, 2000):
-                    winsound.Beep(freq, 40)
-            _play_async(_s)
-
+    def hit(): pass
     @staticmethod
-    def countdown():
-        """Countdown tick."""
-        if sys.platform == "win32":
-            import winsound
-            def _s():
-                winsound.Beep(880, 80)
-            _play_async(_s)
-
+    def morph(): pass
     @staticmethod
-    def eliminated():
-        """Player elimination thud."""
-        if sys.platform == "win32":
-            import winsound
-            def _s():
-                winsound.Beep(350, 120)
-                winsound.Beep(200, 180)
-            _play_async(_s)
+    def footstep(): pass
+    @staticmethod
+    def scanner(): pass
+    @staticmethod
+    def taunt(): pass
+    @staticmethod
+    def countdown(): pass
+    @staticmethod
+    def eliminated(): pass

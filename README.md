@@ -1,4 +1,4 @@
-# MORPH HUNT: The Object Among Us
+# MORPH HUNT
 
 An original 3D multiplayer asymmetric hide-and-seek prototype built with
 **Python 3.11+** and the **Ursina Engine**. Hiders transform into
