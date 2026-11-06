@@ -215,3 +215,10 @@ and every system (server rules + client prediction) picks it up.
   `Audio(...)` calls from Ursina to activate them.
 - Infection mode's role-flip logic is implemented server-side but has
   had the least playtesting of the three modes.
+
+## 13. Screenshots While Gameplay
+<img width="666" height="357" alt="image" src="https://github.com/user-attachments/assets/278f7ff4-bef2-41af-9830-bb84b0e7b58a" />
+<img width="605" height="355" alt="image" src="https://github.com/user-attachments/assets/67cf22bc-61d3-484e-a176-2291d0ea860a" />
+<img width="632" height="336" alt="image" src="https://github.com/user-attachments/assets/44d0a206-d2ac-42d6-8293-1f1768aa4599" />
+
+
